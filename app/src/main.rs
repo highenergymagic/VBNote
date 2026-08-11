@@ -737,7 +737,7 @@ fn main() {
         println!("\nprovisioning flash...");
         let built = match provision::build_flash_image(
             gandalf::FLASH_SIZE,
-            &image,
+            image,
             kernel.as_ref(),
             opts.start_convention,
         ) {
