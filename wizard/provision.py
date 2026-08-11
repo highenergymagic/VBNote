@@ -67,6 +67,36 @@ from dataclasses import dataclass
 
 from . import flashdisk
 
+#: The settings file, as the emulator ships it. Kept here as well so that a
+#: freshly provisioned machine has one before it is ever started.
+SETTINGS = """# VBNote settings.
+#
+# One setting per line, as `name = value`. Lines starting with # or ; are
+# comments. Delete this file to get it back with the defaults.
+
+# How fast the emulated processor is clocked, in MHz.
+#
+# This is not a speed dial. It is how much work the emulator promises to do
+# per second of the machine's time, and promising more than this computer can
+# deliver does not make the machine faster -- it makes it stutter, because the
+# machine produces its speech in its own time and the sound card drains it in
+# real time. 63 is measured to keep up on an ordinary machine. If speech
+# breaks up, lower it. Raising it is unlikely to help.
+cpu_mhz = 63
+
+# Longest a key is held down, in milliseconds, if the machine does not look at
+# the keyboard in the meantime. Only a backstop; keys are normally released as
+# soon as the machine has seen them.
+key_hold_ms = 800
+
+# Turn the sound off entirely. yes or no.
+mute = no
+
+# Write a status file and a log of what the machine did, in this directory.
+# Useful when reporting a problem, off otherwise. yes or no.
+diagnostics = no
+"""
+
 #: Where a provisioned machine lives.
 HOME = os.path.join(os.path.expanduser("~"), ".VBNote")
 
@@ -223,7 +253,24 @@ class Provisioner:
             self._shut_down(machine)
         if not flashdisk.is_ready(self.flash_disk):
             raise Failed("the machine did not finish setting up its flash disk")
+        self._write_settings()
         report(Progress(1.0, "Ready"))
+
+    def _write_settings(self) -> None:
+        """Leave a settings file, so there is one to find and edit.
+
+        The emulator writes its own if there is none, but a user told "the
+        settings are in VBNote.ini" should find VBNote.ini, not be told to
+        start the machine once to make it appear.
+        """
+        path = os.path.join(self.home, "VBNote.ini")
+        if os.path.exists(path):
+            return
+        try:
+            with open(path, "w", newline="") as f:
+                f.write(SETTINGS)
+        except OSError:
+            pass
 
     # -- the waiting ----------------------------------------------------
     def _answer_until_it_stops_asking(self, machine, keys: str, report) -> None:

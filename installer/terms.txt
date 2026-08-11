@@ -1,0 +1,27 @@
+VBNote
+
+VBNote is an emulator of the HumanWare VoiceNote QT and BrailleNote mPower.
+It exists because these machines are no longer made, cannot be repaired
+indefinitely, and the people who rely on them are running out of spares.
+
+Before installing, two things need saying. Both are conditions of using it.
+
+1. THIS IS NOT A HUMANWARE PRODUCT.
+
+   It is an independent project. It is not affiliated with HumanWare, not
+   endorsed by them, and not supported by them. Nothing about it should be
+   presented as theirs.
+
+2. DO NOT CONTACT HUMANWARE ABOUT IT.
+
+   They did not make it and cannot support it. Questions about VBNote belong
+   with the VBNote project, at
+   https://github.com/highenergymagic/VBNote
+
+VBNote does not include the machine's firmware and cannot obtain it for you.
+Setting up a machine needs the bootloader and operating system from a machine
+you own. That firmware remains its owner's property; this software neither
+copies nor distributes it.
+
+VBNote itself is free software under the GNU General Public License, version 2
+only. It comes with no warranty of any kind.

@@ -42,6 +42,26 @@ about anybody's legal position.
 | `docs/hardware.md` | Everything reverse-engineered, with addresses |
 | `work/` | Gitignored scratch: card image, EEPROM dump, logs |
 
+## Installed mode (`app/src/home.rs`, `installer/`)
+
+`vbnote.exe` with **no arguments at all** is how the Start menu starts it, and
+it is a supported path rather than an error: it finds `%USERPROFILE%\.VBNote`,
+reads `VBNote.ini`, and boots `KeysoftSystemDisk.img` with `FlashDisk.img` and
+`onewire.img`, with the window, the keyboard hook and speech all on.
+
+- **No machine there means a dialog, not a message.** There is no console when
+  a windowed program is started from a menu, so `eprintln!` reaches nobody. It
+  says so in a `MessageBoxW`, which a screen reader reads, and stops.
+- **The bootloader argument is optional now.** A flash image already contains
+  one; requiring `EBOOT.bin` alongside it was an accident of how the CLI grew.
+- **`VBNote.ini` is flat `key = value`**, no sections, comments with `#` or
+  `;`. A bad line is reported and ignored rather than fatal -- it is a file a
+  person edits, and a typo should not stop the machine starting. The wizard
+  writes one, and the emulator writes one if it is missing; both come from the
+  same text, and a test pins that the file's comments and the defaults agree.
+- **The card is never removed by the uninstaller.** It is the user's
+  documents.
+
 ## Provisioning (`wizard/`)
 
 A wxPython wizard, and the same work headless. Builds `~/.VBNote` with

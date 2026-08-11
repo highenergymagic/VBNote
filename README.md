@@ -110,6 +110,30 @@ project owes them is to leave them alone and to be unmistakably not-them.
 
 If you fork this, carry both conditions with it.
 
+## Installing
+
+Download the installer from the releases page and run it. It puts VBNote and
+its setup wizard on the Start menu and needs no administrator rights.
+
+Then run **Set up VBNote** once. It asks for the bootloader and operating
+system from a machine you own -- VBNote does not include them and cannot get
+them for you -- and builds your machine in `%USERPROFILE%\.VBNote`. After that,
+**VBNote** on the Start menu starts it: no arguments, no options, it just
+comes up at the main menu.
+
+Settings live in `%USERPROFILE%\.VBNote\VBNote.ini`, a plain text file with a
+comment above every setting, and there is a Start menu entry that opens it.
+The one worth knowing about is `cpu_mhz`: it is how much work the emulator
+promises to do per second of the machine's time, and asking for more than your
+computer can deliver makes speech stutter rather than making the machine
+faster. If speech breaks up, lower it.
+
+Building the installer yourself needs Rust, PyInstaller and Inno Setup 6:
+
+```
+powershell -File installeruild.ps1
+```
+
 ## Setting up a machine
 
 The first run builds a machine of your own. There is a wizard for it:

@@ -12,6 +12,7 @@ static KEYS_PRESSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64
 mod announce;
 mod audio;
 mod cardfile;
+mod home;
 mod hostclock;
 mod hostkey;
 mod keys;
@@ -139,6 +140,8 @@ struct Options {
     sd_is_flash_disk: bool,
     /// Read patches from this directory instead of the ones built in.
     patches_dir: Option<String>,
+    /// Started with no arguments: everything comes from `~/.VBNote`.
+    installed: bool,
     /// Longest a key may be held down, in milliseconds of guest time.
     ///
     /// Only a backstop. A key is normally let go of once the guest has swept
@@ -208,12 +211,15 @@ fn parse_args() -> Result<Options, String> {
         auto_format: true,
         sd_is_flash_disk: true,
         patches_dir: None,
+        installed: false,
         key_hold_ms: 800,
         sd_card: Some("FlashCard.img".to_string()),
         serial_eeprom: Some("SerialNumber.bin".to_string()),
         sd_card_mb: 128,
         trace_at: None,
     };
+    // Whether anything was asked for at all. A bare launch is the Start menu.
+    let bare = std::env::args().nth(1).is_none();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -449,10 +455,63 @@ fn parse_args() -> Result<Options, String> {
             other => return Err(format!("unexpected argument {other}")),
         }
     }
-    if opts.image.is_empty() {
+    // No bootloader given is not an error any more. Either a flash image was
+    // named, which has one inside it, or nothing was named at all and this is
+    // an installed machine being started from its menu -- see `installed`.
+    // Nothing on the command line at all is not a mistake: it is how the
+    // Start menu starts it. Everything then comes from the machine the wizard
+    // built.
+    if bare {
+        opts.installed = true;
+    } else if opts.image.is_empty() && opts.flash_image.is_none() {
         return Err("no image given; try --help".into());
     }
     Ok(opts)
+}
+
+/// Set up from `~/.VBNote`, for a VBNote started with no arguments.
+///
+/// This is the path an ordinary user takes: they installed it, they ran the
+/// wizard once, and now they pick VBNote off the Start menu. Nothing is typed
+/// and nothing is chosen, so everything has to be found.
+///
+/// Returns the message to show and stop on, if it cannot be done.
+fn from_installed_machine(opts: &mut Options) -> Result<(), String> {
+    let home = home::directory()
+        .ok_or_else(|| "VBNote could not work out where your home folder is.".to_string())?;
+    if !home::is_set_up(&home) {
+        return Err(format!(
+            concat!(
+                "VBNote has not been set up yet.\n",
+                "\n",
+                "It could not find a machine in:\n",
+                "{}\n",
+                "\n",
+                "Run \"VBNote Setup\" from the Start menu first. It builds ",
+                "your machine from the firmware files you supply, and only ",
+                "needs doing once.",
+            ),
+            home.display()
+        ));
+    }
+
+    let settings = home::Settings::load(&home);
+    for c in &settings.complaints {
+        eprintln!("{}: {c}", home.join(home::SETTINGS).display());
+    }
+
+    let at = |name: &str| home.join(name).to_string_lossy().into_owned();
+    opts.flash_image = Some(at(home::SYSTEM_DISK));
+    opts.sd_card = Some(at(home::FLASH_DISK));
+    opts.serial_eeprom = Some(at(home::ONEWIRE));
+    opts.cpu_hz = settings.cpu_mhz * 1_000_000;
+    opts.key_hold_ms = settings.key_hold_ms;
+    opts.mute = settings.mute;
+    // The window, the keyboard hook and the speech: this is somebody sitting
+    // down to use the machine, not a scripted run.
+    opts.keyboard = true;
+    opts.status = if settings.diagnostics { Some(at("vbnote.status")) } else { None };
+    Ok(())
 }
 
 /// The patches to apply to this image.
@@ -502,7 +561,7 @@ fn default_serial_eeprom() -> Vec<u8> {
 }
 
 fn main() {
-    let opts = match parse_args() {
+    let mut opts = match parse_args() {
         Ok(o) => o,
         Err(e) => {
             eprintln!("vbnote: {e}");
@@ -510,32 +569,52 @@ fn main() {
         }
     };
 
-    let bytes = match std::fs::read(&opts.image) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("vbnote: cannot read {}: {e}", opts.image);
+    // Started from the Start menu with nothing typed: find the machine the
+    // wizard built and use it. Anything wrong here is shown in a dialog,
+    // because there is no console to print to and nobody would see it.
+    if opts.installed {
+        if let Err(trouble) = from_installed_machine(&mut opts) {
+            home::complain("VBNote", &trouble);
             std::process::exit(1);
         }
-    };
-    let image = match CeImage::parse(&bytes) {
-        Ok(i) => i,
-        Err(e) => {
-            eprintln!("vbnote: {}: {e}", opts.image);
-            std::process::exit(1);
+    }
+    let opts = opts;
+
+    // A bootloader on the command line is one way in. The other is a flash
+    // image that already contains one, which is what an installed machine
+    // boots from, and then there is nothing to read here.
+    let image: Option<CeImage> = if opts.image.is_empty() {
+        None
+    } else {
+        let bytes = match std::fs::read(&opts.image) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("vbnote: cannot read {}: {e}", opts.image);
+                std::process::exit(1);
+            }
+        };
+        match CeImage::parse(&bytes) {
+            Ok(i) => Some(i),
+            Err(e) => {
+                eprintln!("vbnote: {}: {e}", opts.image);
+                std::process::exit(1);
+            }
         }
     };
 
-    let (lo, hi) = image.extent().unwrap_or((0, 0));
-    println!(
-        "image  {}\n  base {:#010x}  launch {:#010x}  {} records, {} KB payload, spans {:#010x}..{:#010x}",
-        opts.image,
-        image.base,
-        image.launch,
-        image.records.len(),
-        image.payload_len() / 1024,
-        lo,
-        hi
-    );
+    if let Some(image) = &image {
+        let (lo, hi) = image.extent().unwrap_or((0, 0));
+        println!(
+            "image  {}\n  base {:#010x}  launch {:#010x}  {} records, {} KB payload, spans {:#010x}..{:#010x}",
+            opts.image,
+            image.base,
+            image.launch,
+            image.records.len(),
+            image.payload_len() / 1024,
+            lo,
+            hi
+        );
+    }
 
     let mut board = Gandalf::with_clock(opts.cpu_hz);
     // Start the clock where the host's is, the way a backup cell would have
@@ -599,7 +678,10 @@ fn main() {
 
     // Filled in by whichever boot path is taken, and kept for as long as the
     // machine runs so a reset can start it the same way.
-    let mut bootable = Bootable::Memory(image.clone());
+    // Filled in by whichever way the machine is started, and kept for as long
+    // as it runs so that a reset can start it the same way. Every path below
+    // sets it, so there is nothing sensible to start it as.
+    let bootable;
     let entry = if let Some(path) = &opts.flash_image {
         // An already-provisioned device: the guest's own writes persist.
         match std::fs::read(path) {
@@ -617,6 +699,9 @@ fn main() {
                     eprintln!("vbnote: {e}");
                     std::process::exit(1);
                 }
+                // A reset puts this back, because the guest erases the block
+                // its bootloader lives in a few seconds into every boot.
+                bootable = Bootable::Flash(raw);
                 0
             }
             Err(e) => {
@@ -625,6 +710,13 @@ fn main() {
             }
         }
     } else if opts.flash {
+        let image = match &image {
+            Some(i) => i,
+            None => {
+                eprintln!("vbnote: --flash needs a bootloader; try --help");
+                std::process::exit(2);
+            }
+        };
         // Provision the whole device the way a factory-flashed machine has
         // it — bootloader, image header, kernel — then boot from physical
         // zero exactly as the hardware does.
@@ -740,7 +832,14 @@ fn main() {
         bootable = Bootable::Flash(built.image);
         0
     } else {
-        match board.load_image(&image) {
+        let image = match &image {
+            Some(i) => i,
+            None => {
+                eprintln!("vbnote: nothing to boot; try --help");
+                std::process::exit(2);
+            }
+        };
+        match board.load_image(image) {
             Ok(e) => {
                 bootable = Bootable::Memory(image.clone());
                 e

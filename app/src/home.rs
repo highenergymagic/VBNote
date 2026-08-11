@@ -1,0 +1,304 @@
+//! The machine's own directory, and the settings beside it.
+//!
+//! An installed VBNote is started from the Start menu with no arguments at
+//! all. Everything it needs is in one place -- `%USERPROFILE%\.VBNote` -- put
+//! there by the setup wizard:
+//!
+//! | file | what it is |
+//! | --- | --- |
+//! | `KeysoftSystemDisk.img` | the NOR flash: bootloader, image header, operating system |
+//! | `FlashDisk.img` | the card the machine keeps documents on |
+//! | `onewire.img` | the 1-Wire part, holding the machine's identity |
+//! | `VBNote.ini` | settings, below |
+//!
+//! # When it is not there
+//!
+//! Someone who has installed VBNote and not yet run the wizard will start the
+//! machine and get nothing. There is no console to print to -- it is a
+//! windowed program launched from a menu -- so it says so in a dialog, which
+//! is a thing a screen reader reads, and stops. Anything less is a program
+//! that appears to do nothing at all.
+//!
+//! # The settings file
+//!
+//! Plain `key = value`, one per line, `#` or `;` for a comment. No sections:
+//! a flat file is easier to read a line at a time, and there is not enough
+//! here to need grouping. Unknown keys are reported and ignored rather than
+//! being fatal, because a settings file is something a person edits and a
+//! typo should not stop the machine starting.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+/// What the directory is called, under the user's home.
+pub const DIR: &str = ".VBNote";
+
+pub const SYSTEM_DISK: &str = "KeysoftSystemDisk.img";
+pub const FLASH_DISK: &str = "FlashDisk.img";
+pub const ONEWIRE: &str = "onewire.img";
+pub const SETTINGS: &str = "VBNote.ini";
+
+/// The settings file as shipped, comments and all.
+///
+/// Written when there is not one, so that the file a user is told they can
+/// edit actually exists and explains itself.
+pub const DEFAULT_SETTINGS: &str = "\
+# VBNote settings.
+#
+# One setting per line, as `name = value`. Lines starting with # or ; are
+# comments. Delete this file to get it back with the defaults.
+
+# How fast the emulated processor is clocked, in MHz.
+#
+# This is not a speed dial. It is how much work the emulator promises to do
+# per second of the machine's time, and promising more than this computer can
+# deliver does not make the machine faster -- it makes it stutter, because the
+# machine produces its speech in its own time and the sound card drains it in
+# real time. 63 is measured to keep up on an ordinary machine. If speech
+# breaks up, lower it. Raising it is unlikely to help.
+cpu_mhz = 63
+
+# Longest a key is held down, in milliseconds, if the machine does not look at
+# the keyboard in the meantime. Only a backstop; keys are normally released as
+# soon as the machine has seen them.
+key_hold_ms = 800
+
+# Turn the sound off entirely. yes or no.
+mute = no
+
+# Write a status file and a log of what the machine did, in this directory.
+# Useful when reporting a problem, off otherwise. yes or no.
+diagnostics = no
+";
+
+/// Where an installed machine lives.
+pub fn directory() -> Option<PathBuf> {
+    let home = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)?;
+    Some(home.join(DIR))
+}
+
+/// Whether a machine has been set up there.
+///
+/// The flash disk is deliberately not required: a machine can be started with
+/// a blank card, and it is the system disk and the identity that cannot be
+/// invented.
+pub fn is_set_up(home: &Path) -> bool {
+    home.join(SYSTEM_DISK).is_file() && home.join(ONEWIRE).is_file()
+}
+
+/// Settings read from `VBNote.ini`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Settings {
+    pub cpu_mhz: u64,
+    pub key_hold_ms: u64,
+    pub mute: bool,
+    pub diagnostics: bool,
+    /// Lines that were not understood, for telling the user about.
+    pub complaints: Vec<String>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Settings {
+            cpu_mhz: 63,
+            key_hold_ms: 800,
+            mute: false,
+            diagnostics: false,
+            complaints: Vec::new(),
+        }
+    }
+}
+
+impl Settings {
+    /// Read the file, or the defaults if there is not one.
+    ///
+    /// Writes the shipped file when it is missing, so that the thing the user
+    /// is told to edit is there to be edited.
+    pub fn load(home: &Path) -> Settings {
+        let path = home.join(SETTINGS);
+        match std::fs::read_to_string(&path) {
+            Ok(text) => Settings::parse(&text),
+            Err(_) => {
+                let _ = std::fs::write(&path, DEFAULT_SETTINGS);
+                Settings::default()
+            }
+        }
+    }
+
+    pub fn parse(text: &str) -> Settings {
+        let mut found: BTreeMap<String, String> = BTreeMap::new();
+        let mut complaints = Vec::new();
+        for (n, raw) in text.lines().enumerate() {
+            let line = raw.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
+                continue;
+            }
+            // A section header is tolerated and ignored: somebody will write
+            // one out of habit, and refusing the whole file over it would be
+            // rude.
+            if line.starts_with('[') && line.ends_with(']') {
+                continue;
+            }
+            match line.split_once('=') {
+                Some((k, v)) => {
+                    found.insert(k.trim().to_ascii_lowercase(), v.trim().to_string());
+                }
+                None => complaints.push(format!("line {}: {line:?} is not `name = value`", n + 1)),
+            }
+        }
+
+        let mut settings = Settings::default();
+        for (key, value) in &found {
+            match key.as_str() {
+                "cpu_mhz" => number(value, &mut settings.cpu_mhz, key, &mut complaints),
+                "key_hold_ms" => number(value, &mut settings.key_hold_ms, key, &mut complaints),
+                "mute" => yes_no(value, &mut settings.mute, key, &mut complaints),
+                "diagnostics" => yes_no(value, &mut settings.diagnostics, key, &mut complaints),
+                _ => complaints.push(format!("{key} is not a setting VBNote knows")),
+            }
+        }
+        // A clock of zero would divide by zero on the first timer tick.
+        if settings.cpu_mhz == 0 {
+            complaints.push("cpu_mhz cannot be 0; using 63".into());
+            settings.cpu_mhz = 63;
+        }
+        settings.complaints = complaints;
+        settings
+    }
+}
+
+fn number(value: &str, into: &mut u64, key: &str, complaints: &mut Vec<String>) {
+    match value.parse::<u64>() {
+        Ok(v) => *into = v,
+        Err(_) => complaints.push(format!("{key} = {value:?} is not a whole number")),
+    }
+}
+
+fn yes_no(value: &str, into: &mut bool, key: &str, complaints: &mut Vec<String>) {
+    match value.to_ascii_lowercase().as_str() {
+        "yes" | "true" | "on" | "1" => *into = true,
+        "no" | "false" | "off" | "0" => *into = false,
+        _ => complaints.push(format!("{key} = {value:?} should be yes or no")),
+    }
+}
+
+/// Tell the user something went wrong, in a way they can read.
+///
+/// A dialog rather than the console, because an installed VBNote is started
+/// from a menu and has no console to print to; a message there is a message
+/// nobody sees. A real dialog is also something a screen reader announces
+/// without being asked.
+pub fn complain(title: &str, message: &str) {
+    eprintln!("{title}: {message}");
+    platform::complain(title, message);
+}
+
+#[cfg(windows)]
+mod platform {
+    extern "system" {
+        fn MessageBoxW(wnd: usize, text: *const u16, caption: *const u16, kind: u32) -> i32;
+    }
+
+    const MB_OK: u32 = 0x0000_0000;
+    const MB_ICONERROR: u32 = 0x0000_0010;
+    const MB_SETFOREGROUND: u32 = 0x0001_0000;
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    pub fn complain(title: &str, message: &str) {
+        unsafe {
+            MessageBoxW(
+                0,
+                wide(message).as_ptr(),
+                wide(title).as_ptr(),
+                MB_OK | MB_ICONERROR | MB_SETFOREGROUND,
+            );
+        }
+    }
+}
+
+#[cfg(not(windows))]
+mod platform {
+    pub fn complain(_title: &str, _message: &str) {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_defaults_are_what_the_shipped_file_says() {
+        // The file a user reads and the behaviour they get have to agree, or
+        // the comments in it are a lie.
+        let from_file = Settings::parse(DEFAULT_SETTINGS);
+        let plain = Settings::default();
+        assert_eq!(from_file.cpu_mhz, plain.cpu_mhz);
+        assert_eq!(from_file.key_hold_ms, plain.key_hold_ms);
+        assert_eq!(from_file.mute, plain.mute);
+        assert_eq!(from_file.diagnostics, plain.diagnostics);
+        assert!(from_file.complaints.is_empty(), "{:?}", from_file.complaints);
+    }
+
+    #[test]
+    fn settings_are_read() {
+        let s = Settings::parse("cpu_mhz = 52\nkey_hold_ms=1200\nmute = yes\n");
+        assert_eq!(s.cpu_mhz, 52);
+        assert_eq!(s.key_hold_ms, 1200);
+        assert!(s.mute);
+        assert!(s.complaints.is_empty());
+    }
+
+    #[test]
+    fn comments_and_blank_lines_and_sections_are_skipped() {
+        let s = Settings::parse("# a comment\n; another\n\n[machine]\ncpu_mhz = 40\n");
+        assert_eq!(s.cpu_mhz, 40);
+        assert!(s.complaints.is_empty(), "{:?}", s.complaints);
+    }
+
+    /// A settings file is something a person edits, so a mistake in it says so
+    /// and everything else still works. Refusing to start would leave them
+    /// with a machine that will not run and no way to see why.
+    #[test]
+    fn a_bad_line_is_reported_and_the_rest_still_applies() {
+        let s = Settings::parse("cpu_mhz = fast\nkey_hold_ms = 500\nwibble = 3\nnonsense\n");
+        assert_eq!(s.cpu_mhz, 63, "kept the default");
+        assert_eq!(s.key_hold_ms, 500, "and read the good line");
+        assert_eq!(s.complaints.len(), 3, "{:?}", s.complaints);
+    }
+
+    /// Zero would divide by zero the first time a timer ticked.
+    #[test]
+    fn a_clock_of_zero_is_refused() {
+        let s = Settings::parse("cpu_mhz = 0\n");
+        assert_eq!(s.cpu_mhz, 63);
+        assert_eq!(s.complaints.len(), 1);
+    }
+
+    #[test]
+    fn yes_and_no_are_generous() {
+        for (text, want) in [("yes", true), ("YES", true), ("on", true), ("1", true),
+                             ("no", false), ("Off", false), ("0", false)] {
+            let s = Settings::parse(&format!("mute = {text}\n"));
+            assert_eq!(s.mute, want, "{text}");
+            assert!(s.complaints.is_empty(), "{text}: {:?}", s.complaints);
+        }
+    }
+
+    /// A machine is set up when the two things that cannot be invented are
+    /// there. The card is not one of them.
+    #[test]
+    fn set_up_means_the_system_disk_and_the_identity() {
+        let dir = std::env::temp_dir().join(format!("vbnote-home-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        assert!(!is_set_up(&dir));
+        std::fs::write(dir.join(SYSTEM_DISK), b"x").unwrap();
+        assert!(!is_set_up(&dir), "the identity is missing");
+        std::fs::write(dir.join(ONEWIRE), b"x").unwrap();
+        assert!(is_set_up(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
