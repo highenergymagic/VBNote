@@ -16,6 +16,10 @@
       Inno Setup 6, from https://jrsoftware.org/isdl.php
 
     The result is dist\VBNote-<version>-setup.exe.
+
+    Continuous integration runs this on a clean Windows runner on every push,
+    which is the only way a build needing three separate toolchains stays
+    working.
 #>
 [CmdletBinding()]
 param(
@@ -60,10 +64,11 @@ if (-not (Test-Path 'target\release\vbnote.exe')) {
 # to a temporary folder on every run, which is slow and trips some antivirus.
 Write-Host 'Freezing the setup wizard...' -ForegroundColor Cyan
 if (Test-Path 'dist\wizard') { Remove-Item -Recurse -Force 'dist\wizard' }
+$versionFile = Join-Path 'installer' 'version.txt'
 python -m PyInstaller `
     --noconfirm --clean --windowed `
     --name 'VBNote Setup' `
-    --version-file 'installerersion.txt' `
+    --version-file $versionFile `
     --distpath 'dist\pyinstaller' `
     --workpath 'build\pyinstaller' `
     --specpath 'build' `
