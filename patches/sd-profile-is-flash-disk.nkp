@@ -1,0 +1,48 @@
+# Mount the card under `Flash Disk` rather than `SD Card`.
+#
+# The block driver's own key already names the folder, and that is patched too
+# -- see sd-folder-is-flash-disk.nkp -- but Windows CE may take the name from
+# the storage profile instead. Rather than work out which of the two it reads,
+# both now say the same thing. Whichever wins, the answer is the same.
+#
+# `SD Card` is seven characters and `Flash Disk` is ten, so this one cannot be
+# written over where it sits. Instead the profile's `Folder` and `Name` values
+# are rewritten as a pair: `Folder` grows by six bytes and `Name` gives up the
+# same six, going from `SDMMC Card` to `SD Card`. The region is the same length
+# afterwards, so nothing downstream of it moves, and every record still
+# describes itself correctly.
+#
+# `SD Card` is also what KeySoft calls the slot, so the shorter name is the
+# more honest one.
+#
+# The record header is [size][2][type][name chars][data length]. Note the
+# order: registry.rs described the last two the other way round for a long
+# time, which is invisible for a REG_DWORD -- both hold 4 -- and wrong for
+# everything else.
+
+name: SD profile
+because: so the profile agrees with the driver about where a card mounts
+reach: sole
+at: 0
+
+signature:
+  # Folder = "SD Card"
+  24 00 02 00 01 00 07 00 10 00
+  46 00 6f 00 6c 00 64 00 65 00 72 00 00 00       # "Folder"
+  53 00 44 00 20 00 43 00 61 00 72 00 64 00 00 00 # "SD Card"
+  # Name = "SDMMC Card"
+  26 00 02 00 01 00 05 00 16 00
+  4e 00 61 00 6d 00 65 00 00 00                   # "Name"
+  53 00 44 00 4d 00 4d 00 43 00 20 00
+  43 00 61 00 72 00 64 00 00 00                   # "SDMMC Card"
+
+replacement:
+  # Folder = "Flash Disk", six bytes longer
+  2a 00 02 00 01 00 07 00 16 00
+  46 00 6f 00 6c 00 64 00 65 00 72 00 00 00       # "Folder"
+  46 00 6c 00 61 00 73 00 68 00 20 00
+  44 00 69 00 73 00 6b 00 00 00                   # "Flash Disk"
+  # Name = "SD Card", six bytes shorter, so the region is the same length
+  20 00 02 00 01 00 05 00 10 00
+  4e 00 61 00 6d 00 65 00 00 00                   # "Name"
+  53 00 44 00 20 00 43 00 61 00 72 00 64 00 00 00 # "SD Card"

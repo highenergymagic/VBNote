@@ -1,0 +1,16 @@
+[package]
+name = "vbnote"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+arm.workspace = true
+pxa270.workspace = true
+gandalf.workspace = true
+ceromfs.workspace = true
+cpal = "0.15"
+ctrlc = "3"
+minifb = "0.28.0"
+tts = "0.26"
+libloading = "0.8"

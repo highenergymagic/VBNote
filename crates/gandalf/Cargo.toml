@@ -1,0 +1,11 @@
+[package]
+name = "gandalf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "The VoiceNote/BrailleNote mPower board"
+
+[dependencies]
+arm.workspace = true
+pxa270.workspace = true
+ceromfs.workspace = true

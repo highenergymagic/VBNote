@@ -1,0 +1,8 @@
+[package]
+name = "pxa270"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Intel PXA270 on-chip peripheral models"
+
+[dependencies]

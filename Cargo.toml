@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/arm",
+    "crates/pxa270",
+    "crates/gandalf",
+    "crates/ceromfs",
+    "app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-2.0-only"
+repository = "https://github.com/highenergymagic/VBNote"
+
+[workspace.dependencies]
+arm = { path = "crates/arm" }
+pxa270 = { path = "crates/pxa270" }
+gandalf = { path = "crates/gandalf" }
+ceromfs = { path = "crates/ceromfs" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+
+# The CPU interpreter is unusably slow in a debug build; always optimise it.
+[profile.dev.package.arm]
+opt-level = 3
+[profile.dev.package.pxa270]
+opt-level = 3

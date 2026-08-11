@@ -1,0 +1,32 @@
+# Point the SD/MMC block driver's folder at `Flash Disk`.
+#
+# `Drivers\SDCard\sdmmc` is a complete Windows CE block driver already in this
+# ROM -- `sdmmc.dll` behind prefix `DSK`, with the block-driver IClass,
+# `fatfs.dll` as its file system and its own storage profile. Given a card to
+# talk to, the stock storage stack partitions it, puts FAT on it and mounts it
+# as a folder, which is the whole of what KeySoft wants.
+#
+# The folder it mounts under is `SDMMC Disk`, and KeySoft looks for
+# `\Flash Disk`. Both are ten characters, so the name is replaced where it
+# sits: no record grows, no offset moves, and the rest of the registry does not
+# notice.
+#
+# The signature carries the `Profile` value in front of the `Folder` value
+# because `SDMMC Disk` alone appears twice in the image.
+#
+# This would stop being needed if the DiskOnChip were modelled and its TrueFFS
+# volume readable. It is not, deliberately -- see CLAUDE.md.
+
+name: SD folder
+because: so a card mounts where KeySoft looks for the flash disk
+reach: sole
+at: 12
+
+signature:
+  53 00 44 00 4d 00 4d 00 43 00 00 00   # "SDMMC" and its terminator
+  53 00 44 00 4d 00 4d 00 43 00 20 00   # "SDMMC "
+  44 00 69 00 73 00 6b 00 00 00 00 00   # "Disk" and padding
+
+replacement:
+  46 00 6c 00 61 00 73 00 68 00 20 00   # "Flash "
+  44 00 69 00 73 00 6b 00               # "Disk"

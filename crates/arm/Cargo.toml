@@ -1,0 +1,10 @@
+[package]
+name = "arm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "ARMv5TE (Intel XScale) interpreter with MMU, for the VBNote emulator"
+
+[dependencies]
+
+[dev-dependencies]

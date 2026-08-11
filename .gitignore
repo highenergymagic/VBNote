@@ -1,0 +1,33 @@
+/target
+**/*.rs.bk
+
+# Firmware images are HumanWare's copyrighted property. Never commit them.
+*.bin
+*.BIN
+/roms/
+/mPower*.zip
+*.nb0
+*.pe
+
+# Scratch analysis output
+/tools/extracted/
+/tools/ghidraproj/
+__pycache__/
+
+# Audio captures from a run
+*.wav
+
+# Runtime control and status files
+vbnote.status
+vbnote.status.stop
+/work/
+/work2/
+
+# Stray run output and third-party documentation
+halt-after-*.txt
+keysoft_*_upgrade_instructions*.txt
+
+# Disk images: card images, provisioned flash, anything a run leaves behind.
+# These are large and some of them carry firmware.
+*.img
+/.VBNote/
