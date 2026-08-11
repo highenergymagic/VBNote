@@ -1,0 +1,107 @@
+name: build
+
+# Two jobs. The tests run on everything; the installer is built on every push
+# to main so there is always a current one to download, and attached to a
+# release when a version is tagged.
+#
+# The installer is built here rather than on a developer's machine on purpose.
+# It needs Rust, PyInstaller and Inno Setup, and a build that only ever
+# happens where all three already are is a build that quietly stops working.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show the toolchain
+        run: |
+          cargo --version
+          rustc --version
+
+      - name: Build
+        run: cargo build --release --workspace
+
+      # Warnings are not tolerated: this codebase keeps to zero, and a warning
+      # that lands quietly is a warning that stays.
+      - name: No warnings
+        run: |
+          $out = cargo build --release --workspace 2>&1 | Out-String
+          if ($out -match '(?m)^warning') {
+            Write-Host $out
+            throw "the build produced warnings"
+          }
+
+      - name: Test
+        run: cargo test --release --workspace
+
+      - name: Clippy
+        run: |
+          rustup component add clippy
+          cargo clippy --release --all-targets -- -D warnings
+
+  installer:
+    name: installer
+    runs-on: windows-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # wxPython for the wizard, PyInstaller to freeze it so that nobody
+      # installing VBNote needs Python at all.
+      - name: Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r wizard/requirements.txt pyinstaller
+
+      - name: Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      # The wizard's own moving parts, before anything is packaged around
+      # them. The FAT reader is the one worth checking: it decides when a
+      # machine has finished setting itself up.
+      - name: Check the wizard imports
+        run: |
+          python -c "import wx; print('wxPython', wx.version())"
+          python -c "from wizard import provision, flashdisk, wizard; print('wizard ok')"
+
+      - name: Build the installer
+        run: powershell -ExecutionPolicy Bypass -File installer\build.ps1
+
+      - name: What was built
+        run: Get-ChildItem dist -Recurse -File | Select-Object FullName, Length
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VBNote-installer
+          path: dist/*setup.exe
+          if-no-files-found: error
+
+      # A tagged version becomes a release, with the installer on it.
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$env:GITHUB_REF_NAME" (Get-ChildItem dist\*setup.exe).FullName `
+            --title "VBNote $env:GITHUB_REF_NAME" `
+            --notes "VBNote $env:GITHUB_REF_NAME.
+
+          Install it, then run **Set up VBNote** once. It builds your machine from the bootloader and operating system of a machine you own; VBNote does not include them and cannot obtain them.
+
+          This is not a HumanWare product and is not supported by them."
