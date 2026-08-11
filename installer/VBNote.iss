@@ -10,8 +10,9 @@
 
 #define Name "VBNote"
 #define Version "0.1.0"
-#define Publisher "VBNote project"
+#define Publisher "Fractal Microsystems"
 #define Url "https://github.com/highenergymagic/VBNote"
+#define Copyright "Copyright (C) 2026 Fractal Microsystems. GPL-2.0-only."
 #define Exe "vbnote.exe"
 #define SetupExe "VBNote Setup.exe"
 
@@ -20,6 +21,11 @@ AppId={{7B2F1C4E-9A3D-4E62-9C1B-5D4A8F0E2B77}
 AppName={#Name}
 AppVersion={#Version}
 AppPublisher={#Publisher}
+AppCopyright={#Copyright}
+VersionInfoCompany={#Publisher}
+VersionInfoCopyright={#Copyright}
+VersionInfoProductName={#Name}
+VersionInfoVersion={#Version}
 AppPublisherURL={#Url}
 AppSupportURL={#Url}/issues
 DefaultDirName={autopf}\{#Name}

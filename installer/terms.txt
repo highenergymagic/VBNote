@@ -23,5 +23,5 @@ Setting up a machine needs the bootloader and operating system from a machine
 you own. That firmware remains its owner's property; this software neither
 copies nor distributes it.
 
-VBNote itself is free software under the GNU General Public License, version 2
-only. It comes with no warranty of any kind.
+VBNote is made by Fractal Microsystems. It is free software under the GNU General
+Public License, version 2 only, and comes with no warranty of any kind.

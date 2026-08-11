@@ -22,10 +22,11 @@ from . import provision
 from .provision import default_emulator
 
 TITLE = "VBNote Setup"
+COMPANY = "Fractal Microsystems"
 
 TERMS = """\
-VBNote is an emulator of a discontinued notetaker. Before it is set up, two \
-things need saying, and both are conditions of using it.
+VBNote is an emulator of a discontinued notetaker, made by {company}. Before \
+it is set up, two things need saying, and both are conditions of using it.
 
 This is not a HumanWare product. It is an independent project. It is not \
 affiliated with HumanWare, not endorsed by them, and not supported by them.
@@ -62,7 +63,7 @@ class TermsPage(wx.adv.WizardPageSimple):
         # some screen readers, and this is the one thing on the page worth
         # reading.
         text = wx.TextCtrl(
-            self, value=TERMS,
+            self, value=TERMS.format(company=COMPANY),
             style=wx.TE_MULTILINE | wx.TE_READONLY | wx.TE_WORDWRAP)
         text.SetName("Terms, read only")
         box.Add(text, 1, wx.EXPAND | wx.ALL, 8)

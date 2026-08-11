@@ -63,6 +63,7 @@ if (Test-Path 'dist\wizard') { Remove-Item -Recurse -Force 'dist\wizard' }
 python -m PyInstaller `
     --noconfirm --clean --windowed `
     --name 'VBNote Setup' `
+    --version-file 'installerersion.txt' `
     --distpath 'dist\pyinstaller' `
     --workpath 'build\pyinstaller' `
     --specpath 'build' `

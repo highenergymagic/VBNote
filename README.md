@@ -89,6 +89,11 @@ Option?
 ```
 
 
+## Who makes this
+
+VBNote is made by **Fractal Microsystems**, and is free software under the GNU General
+Public License, version 2 only.
+
 ## This is not a HumanWare product
 
 It is an independent project. It is not affiliated with HumanWare, not
