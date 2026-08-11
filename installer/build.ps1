@@ -64,7 +64,9 @@ if (-not (Test-Path 'target\release\vbnote.exe')) {
 # to a temporary folder on every run, which is slow and trips some antivirus.
 Write-Host 'Freezing the setup wizard...' -ForegroundColor Cyan
 if (Test-Path 'dist\wizard') { Remove-Item -Recurse -Force 'dist\wizard' }
-$versionFile = Join-Path 'installer' 'version.txt'
+# Absolute: PyInstaller resolves a relative --version-file against --specpath,
+# not against the working directory, and looks for it under build\ instead.
+$versionFile = (Resolve-Path (Join-Path 'installer' 'version.txt')).Path
 python -m PyInstaller `
     --noconfirm --clean --windowed `
     --name 'VBNote Setup' `
