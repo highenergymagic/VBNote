@@ -488,7 +488,69 @@ seconds, then `sync_data`. A boot costs about **206 blocks in 2 flushes**.
 Verified the only way that means anything: `taskkill /F` mid-run, and the card
 still boots to the Main Menu.
 
-## The clock## The clock
+## What is on the flash disk
+
+Measured from a provisioned card, and it decides what any file-transfer code
+has to speak:
+
+- CE's layout is an extended partition holding a volume at **LBA 288** whose
+  partition byte says `0x06` while **the BPB says FAT32**. Trust the BPB.
+- **512-byte clusters** (one sector), 259,778 of them, and **one** FAT of 2046
+  sectors -- no second copy to fall back on if a write goes wrong.
+- **Long filenames are in use**, with 8.3 aliases beside them: `Read Me for
+  KeySoft 8_00.kwt` is `README~1.KWT`.
+- KeySoft's folders are `General` (the user's documents), `Keylist`,
+  `Keybase`, `Dictionaries` and the rest.
+- A `.kwt` is a structured format -- it opens with the document's name in
+  UTF-16LE, then a zeroed header -- but **plain `.txt` sits on the card and
+  KeyWord opens it directly** (`General\xbase.txt`). So moving files is the
+  whole job; no format converter is needed to make transfer useful.
+
+## The CompactFlash slot
+
+The route for getting files in and out, and the go/no-go is **measured**:
+
+- The ROM carries the whole stack as XIP modules: `pcmcia.dll` at
+  `0x022c0000`, `atadisk.dll` at `0x03e10000`, `mspart.dll` at `0x03db0000`,
+  `fatfsd.dll` at `0x03f20000`.
+- `Drivers\BuiltIn\PCMCIA` loads `PCMCIA.dll` with IClass
+  `{6BEAB08A-8914-42fd-B33F-61968B9AAB32}` -- PCMCIA Card Services.
+- `System\StorageManager\Profiles\CompactFlash` says `Name = PCMCIA/Compact
+  Flash Device`, **`Folder = CompactFlash`** so it mounts as `\CompactFlash`,
+  `PartitionDriver = mspart.dll`, with AutoMount, AutoPart and AutoFormat.
+- KeySoft already probes `\CompactFlash\pdiboot.exe`, `\PC card\pdiboot.exe`
+  and `\SD card\pdiboot.exe`, so it knows the slot exists.
+- **`pcmcia.dll`'s DllMain `0x022cc8d4` is hit once on a normal boot;
+  `atadisk.dll`'s `0x03e117bc` is not, and card space `0x2000_0000` is never
+  read.** That is a live socket driver with an empty slot: card services
+  initialises, and the ATA driver is loaded only when a card is detected. The
+  work is presenting a card, not making CE care about one.
+- **There is no USB mass storage in this ROM** -- no `usbdisk.dll`, no
+  `MassStorage`, no `UHCI`. CF is the only removable route there is.
+- Not modelled yet: card space is **not in the memory map at all**, and the
+  static memory controller at `0x4800_0000` is a plain register file, so
+  `MECR`/`MCMEM0`/`MCATT0`/`MCIO0` are absorbed silently. Socket registers
+  being *mapped* is why an unmapped-access report cannot see them.
+
+The intended shape, so it does not get redesigned by accident:
+
+- **The image is the device; a host directory is the interchange.** Building a
+  volume from scratch needs only a sequential writer -- format, lay files down
+  contiguously, append directory entries -- and reading one back needs only a
+  reader. **A general-purpose FAT writer is never required.**
+- **Not vvfat.** Synthesising FAT live over a directory and mapping guest
+  sector writes back to files is what QEMU's read-write vvfat does, and it is
+  experimental for good reason. This is GPL-2.0 so that source is available,
+  but not for the write path, and not under a blind user's documents.
+- **The CF is a transfer volume, not the store.** Documents live on the Flash
+  Disk. A bug here loses a copy, not the work.
+- **Export is idempotent and resumable, never exit-only work.** Eject, quit,
+  and *next start if the last run did not get there*, found by a marker. The
+  card image itself is flushed as it runs, the same as the SD card, because
+  `taskkill /F` is an ending too -- see the section above for why that is not
+  a hypothetical.
+
+## The clock
 
 `RCNR` counts seconds from **midnight on 1 January 2010**, not from 1970: left
 at zero the machine announces exactly that date and asks the user to set the
