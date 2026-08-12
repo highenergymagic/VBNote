@@ -1111,7 +1111,12 @@ fn main() {
             Ok(mut volume) => {
                 let report = usbsync::out_of_drive(&mut volume, &folder);
                 if let Some(said) = report.spoken("from the drive") {
-                    println!("usb disk: {said} They are in {}", folder.display());
+                    // The folder goes on its own line rather than into the
+                    // sentence: "They are in" is wrong for one file, and a
+                    // sentence that has to agree with a count is a sentence
+                    // that will get it wrong again later.
+                    println!("usb disk: {said}");
+                    println!("  in {}", folder.display());
                 }
                 for name in &report.failed {
                     eprintln!("usb disk: could not copy {name} out");
