@@ -808,6 +808,33 @@ clock questions out loud at every boot, to somebody who cannot see the screen.
    says where the guest spends itself, and says almost nothing about where the
    emulator does.
 
+0.9 **The SD driver's hot loop is a delay, and it is already cheaper here
+   than on the real part.** `sdmmc.dll+0x49a0` takes 13.5% of the samples
+   during a USB gap and about 9% of a whole boot, which looked like a spin
+   worth breaking. It is `StallExecution`: `0x03dc49b8` multiplies its
+   argument by **3250** and `0x03dc496c` spins until a counter passes
+   start+N, handling wraparound first. The counter is at `0x000c0010` in
+   slot 4, which is physical **`0x40A00010`, OSCR** -- so the firmware is
+   waiting on the OS timer, not polling a device that could answer sooner.
+   Measured over a boot: **4,214 calls, 164,360,890 iterations**, 39,003
+   iterations a call, or about **7.8 seconds of guest time**.
+
+   **There is nothing to reclaim by making it spin less.** OSCR runs at
+   3.6864 MHz whatever the core does, so at `--cpu-mhz 63` one tick costs
+   **17 interpreted instructions**, where a real PXA270 at 312 MHz burns
+   **85**. The emulator already spins five times *fewer* times than the
+   hardware does, and lowering `--cpu-mhz` lowers it further. The delay is
+   the firmware spending its own time, and it costs the same wall clock on
+   both machines.
+
+   What is *not* settled is host cost, and the distinction is the one from
+   0.75 again: **9% is a share of guest cycles, not of host time.** Those
+   164 M iterations are 164 M *device-register* reads, which take the bus
+   dispatch rather than the SDRAM slice, so they may be worth several times
+   an ordinary instruction each. Whether an OSCR fast path pays is an open,
+   bounded question -- and per the rule below it needs a boot to first
+   speech to answer, not a clock reading.
+
 1. **Speed.** 65 M cycles/s, 15.3 ns an emulated cycle, against 3.2 ns for a
    real PXA270. The cheap wins are taken: device ticking was over half the
    time and is batched, the runner's per-instruction bookkeeping is gone, and
