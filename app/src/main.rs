@@ -2799,6 +2799,22 @@ the guest sampled the CPLD board identification register (reported {:#06x})",
     }
     if !armed.is_empty() {
         any = true;
+        let table = board.soc.intc.programmed_sources();
+        if table.is_empty() {
+            println!("INTC priority table: not programmed, so ICHP scans every source");
+        } else {
+            let usb = table.contains(&pxa270::intc::IRQ_USB_HOST_1);
+            println!(
+                "INTC priority table: {} entries, USB host 1 {}",
+                table.len(),
+                if usb {
+                    "present"
+                } else {
+                    "MISSING -- ICHP will never report it"
+                }
+            );
+        }
+
         println!("\nGPIOs armed for edge detection:");
         for a in &armed {
             println!("  {a}");

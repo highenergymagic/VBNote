@@ -63,6 +63,20 @@ impl Intc {
         }
     }
 
+    /// The sources the guest has put in its priority table, in order.
+    ///
+    /// Worth being able to see: if the table is programmed and a source is
+    /// missing from it, `ichp` will not report that source, the OAL will not
+    /// recognise the interrupt, and the driver waiting on it is never
+    /// signalled -- which looks like a slow device rather than a lost wake.
+    pub fn programmed_sources(&self) -> Vec<u32> {
+        self.priority
+            .iter()
+            .filter(|p| *p & IPR_VALID != 0)
+            .map(|p| p & 0x3F)
+            .collect()
+    }
+
     /// Whether the guest has this source masked off.
     ///
     /// A device that raises a masked line has not interrupted anybody: the
