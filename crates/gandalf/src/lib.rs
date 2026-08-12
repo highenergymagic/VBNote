@@ -14,6 +14,7 @@
 pub mod braille;
 pub mod cpld;
 pub mod dma;
+pub mod fat32;
 pub mod flash;
 pub mod keyboard;
 pub mod licence;

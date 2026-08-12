@@ -22,6 +22,7 @@
 //! The residue is the part everyone gets wrong: it is how many bytes of what
 //! was *asked for* did not arrive, not how many did.
 
+use crate::fat32::Store;
 use crate::usb::Device;
 
 /// Sector size, and nothing here changes it.
@@ -47,8 +48,9 @@ enum Phase {
 }
 
 pub struct UsbDisk {
-    /// The disk itself.
-    pub data: Vec<u8>,
+    /// The disk itself. A file for a real one, so that a 32 GB drive is 32 GB
+    /// of sparse file rather than 32 GB of memory.
+    pub store: Store,
     address: u8,
     configured: bool,
 
@@ -62,16 +64,19 @@ pub struct UsbDisk {
     /// Data waiting to go to the host.
     to_host: Vec<u8>,
     /// Where a write is going, and how much is left of it.
-    write_at: usize,
+    write_at: u64,
     write_left: usize,
     /// The answer to REQUEST SENSE: key, then additional code and qualifier.
     sense: (u8, u8, u8),
+    /// Commands seen, so a class driver that bound can be told from one that
+    /// never did. Enumeration and use are separate questions.
+    pub commands: u64,
 }
 
 impl UsbDisk {
-    pub fn new(data: Vec<u8>) -> UsbDisk {
+    pub fn new(store: Store) -> UsbDisk {
         UsbDisk {
-            data,
+            store,
             address: 0,
             configured: false,
             phase: Phase::Command,
@@ -83,15 +88,16 @@ impl UsbDisk {
             write_at: 0,
             write_left: 0,
             sense: (0, 0, 0),
+            commands: 0,
         }
     }
 
     pub fn blank(megabytes: usize) -> UsbDisk {
-        UsbDisk::new(vec![0; megabytes * 1024 * 1024])
+        UsbDisk::new(Store::memory(megabytes * 1024 * 1024))
     }
 
     pub fn sectors(&self) -> u32 {
-        (self.data.len() / SECTOR) as u32
+        (self.store.len() / SECTOR as u64) as u32
     }
 
     fn descriptor(&self, kind: u8, index: u8) -> Option<Vec<u8>> {
@@ -157,6 +163,7 @@ impl UsbDisk {
         self.to_host.clear();
         self.write_left = 0;
 
+        self.commands += 1;
         let cb = &cbw[15..31];
         self.scsi(cb);
 
@@ -224,25 +231,25 @@ impl UsbDisk {
             }
             // READ(10).
             0x28 => {
-                let (lba, n) = (lba() as usize, count16() as usize);
-                let at = lba * SECTOR;
-                let end = at + n * SECTOR;
-                if end > self.data.len() {
+                let (lba, n) = (lba() as u64, count16() as u64);
+                let at = lba * SECTOR as u64;
+                let end = at + n * SECTOR as u64;
+                if end > self.store.len() {
                     // Logical block address out of range.
                     self.fail(5, 0x21, 0);
                 } else {
-                    self.to_host = self.data[at..end].to_vec();
+                    self.to_host = self.store.read(at, (n * SECTOR as u64) as usize);
                 }
             }
             // WRITE(10).
             0x2A => {
-                let (lba, n) = (lba() as usize, count16() as usize);
-                let at = lba * SECTOR;
-                if at + n * SECTOR > self.data.len() {
+                let (lba, n) = (lba() as u64, count16() as u64);
+                let at = lba * SECTOR as u64;
+                if at + n * SECTOR as u64 > self.store.len() {
                     self.fail(5, 0x21, 0);
                 } else {
                     self.write_at = at;
-                    self.write_left = n * SECTOR;
+                    self.write_left = (n * SECTOR as u64) as usize;
                 }
             }
             // Anything else: invalid command operation code. Saying so is
@@ -265,6 +272,10 @@ impl UsbDisk {
 }
 
 impl Device for UsbDisk {
+    fn commands(&self) -> u64 {
+        self.commands
+    }
+
     fn address(&self) -> u8 {
         self.address
     }
@@ -351,8 +362,8 @@ impl Device for UsbDisk {
                 let n = data.len().min(self.write_left);
                 if n > 0 {
                     let at = self.write_at;
-                    self.data[at..at + n].copy_from_slice(&data[..n]);
-                    self.write_at += n;
+                    self.store.write(at, &data[..n]);
+                    self.write_at += n as u64;
                     self.write_left -= n;
                 }
                 self.moved += data.len() as u32;
@@ -490,7 +501,7 @@ mod tests {
         disk.bulk_out(2, &cbw(3, SECTOR as u32, true, &read));
         let got = disk.bulk_in(1, SECTOR);
         assert_eq!(got, payload);
-        assert_eq!(&disk.data[9 * SECTOR..10 * SECTOR], &payload[..]);
+        assert_eq!(disk.store.read(9 * SECTOR as u64, SECTOR), payload);
     }
 
     /// Reading past the end fails rather than returning zeroes, and the

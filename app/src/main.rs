@@ -750,17 +750,42 @@ fn main() {
     // so the driver finds it during its own enumeration rather than having to
     // be told about it later.
     if let Some(path) = &opts.usb_disk {
+        use gandalf::fat32;
         use gandalf::usbdisk::UsbDisk;
-        let disk = match std::fs::read(path) {
-            Ok(raw) => {
-                println!("usb disk: {} MB, from {path}", raw.len() / (1024 * 1024));
-                UsbDisk::new(raw)
+        // The machine will not partition or format this for itself, so it
+        // arrives ready to mount. Made sparse, because the size the user
+        // asked for is a ceiling rather than an amount of disk to hand over.
+        let store = if std::path::Path::new(path).exists() {
+            let store = match fat32::open(path) {
+                Ok(s) => s,
+                Err(e) => { eprintln!("{e}"); std::process::exit(1); }
+            };
+            println!("usb disk: {} MB, from {path}", store.len() / (1024 * 1024));
+            store
+        } else {
+            let mb = opts
+                .usb_disk_mb
+                .clamp(fat32::MIN_MEGABYTES, fat32::MAX_MEGABYTES);
+            if mb != opts.usb_disk_mb {
+                println!(
+                    "usb disk: {} MB is outside {}-{} MB, using {mb}",
+                    opts.usb_disk_mb,
+                    fat32::MIN_MEGABYTES,
+                    fat32::MAX_MEGABYTES
+                );
             }
-            Err(_) => {
-                println!("usb disk: {} MB, blank", opts.usb_disk_mb);
-                UsbDisk::blank(opts.usb_disk_mb)
+            let mut store = match fat32::create_sparse(path, mb as u64 * 1024 * 1024) {
+                Ok(s) => s,
+                Err(e) => { eprintln!("{e}"); std::process::exit(1); }
+            };
+            if let Err(e) = fat32::format(&mut store, "VBNOTE") {
+                eprintln!("{e}");
+                std::process::exit(1);
             }
+            println!("usb disk: {mb} MB, formatted FAT32, {path}");
+            store
         };
+        let disk = UsbDisk::new(store);
         board.usb = Some(Box::new(disk));
         let soc = &mut board.soc;
         soc.ohci.set_connected(0, true, &mut soc.intc);
@@ -2484,8 +2509,9 @@ data aborts (distinct):");
             // assigns one after a successful control transfer, so it cannot
             // be there unless descriptors were read and answered.
             println!(
-                "  device attached, address {} ({})",
+                "  device attached, address {}, {} storage commands ({})",
                 dev.address(),
+                dev.commands(),
                 if dev.address() == 0 {
                     "not enumerated"
                 } else {

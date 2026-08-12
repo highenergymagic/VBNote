@@ -180,6 +180,15 @@ pub trait Device {
     /// The address the device has been told to answer to. Zero until the host
     /// assigns one, which it does with a control transfer to address zero.
     fn address(&self) -> u8;
+
+    /// How many commands the device has been given over its bulk endpoints.
+    ///
+    /// Enumeration proves the controller works. This proves the *class*
+    /// driver bound and is using it, which is a different question and the
+    /// one that decides whether a volume ever appears.
+    fn commands(&self) -> u64 {
+        0
+    }
 }
 
 /// Run some of the controller's work. Called from the board's tick.
