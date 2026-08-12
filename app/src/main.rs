@@ -571,8 +571,8 @@ fn from_installed_machine(opts: &mut Options) -> Result<(), String> {
     // in Documents. 256 MB because the size of this decides how long the
     // machine takes to answer questions about it, not how much can be
     // carried on it.
-    opts.usb_disk = Some(at("UsbDrive.vhd"));
-    opts.usb_disk_mb = 256;
+    opts.usb_disk = Some(at(home::USB_DISK));
+    opts.usb_disk_mb = settings.usb_disk_mb as usize;
     opts.status = if settings.debug { Some(at("vbnote.status")) } else { None };
     Ok(())
 }
@@ -808,6 +808,13 @@ fn main() {
             println!("  it is a fixed VHD, so Windows can mount it (needs administrator)");
             store
         };
+        let folder = usb_folder(&opts);
+        if let Err(e) = std::fs::create_dir_all(&folder) {
+            eprintln!("usb disk: cannot make {}: {e}", folder.display());
+        } else {
+            println!("usb disk: files go in {}", folder.display());
+        }
+
         // Anything new in the folder goes on the drive before the machine
         // starts. Never while it runs: CE caches directory sectors, and two
         // writers on one filesystem corrupt it without either noticing.
@@ -2411,7 +2418,7 @@ fn usb_folder(opts: &Options) -> std::path::PathBuf {
         .unwrap_or_default();
     std::path::Path::new(&home)
         .join("Documents")
-        .join("VBNote USB Drive")
+        .join(home::USB_FOLDER)
 }
 
 fn report(cpu: &Cpu, board: &mut Gandalf, outcome: Outcome, limit: usize) {

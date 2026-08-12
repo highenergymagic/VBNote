@@ -176,11 +176,19 @@ class Progress:
 class Provisioner:
     """Builds a machine in `home` from the firmware the user supplied."""
 
-    def __init__(self, emulator: str, eboot: str, kernel: str, home: str = HOME):
+    def __init__(
+        self,
+        emulator: str,
+        eboot: str,
+        kernel: str,
+        home: str = HOME,
+        usb_disk_mb: int = 256,
+    ):
         self.emulator = emulator
         self.eboot = eboot
         self.kernel = kernel
         self.home = home
+        self.usb_disk_mb = usb_disk_mb
 
     # -- the three files ------------------------------------------------
     @property
@@ -269,7 +277,42 @@ class Provisioner:
             return
         try:
             with open(path, "w", newline="") as f:
-                f.write(SETTINGS)
+                text = SETTINGS
+                if "usb_disk_mb" not in text:
+                    # This copy of the defaults predates the setting. Adding it
+                    # here rather than editing the block above keeps the two
+                    # from drifting further apart: the emulator's own copy in
+                    # home.rs is the one with the explanation.
+                    text += "\n".join(
+                        [
+                            "",
+                            "# How big to make the removable drive, in megabytes, the",
+                            "# first time it is made. Delete UsbDrive.vhd to have a new",
+                            "# one made at a new size.",
+                            f"usb_disk_mb = {self.usb_disk_mb}",
+                            "",
+                        ]
+                    )
+                else:
+                    text = text.replace(
+                        "usb_disk_mb = 256", f"usb_disk_mb = {self.usb_disk_mb}"
+                    )
+                f.write(text)
+        except OSError:
+            pass
+        self._make_transfer_folder()
+
+    def _make_transfer_folder(self) -> None:
+        """Put the transfer folder there before anybody looks for it.
+
+        The emulator makes it too, on its first run -- but somebody who has
+        just been told where to put their files should be able to go and put
+        them there, rather than being told to start the machine once first so
+        that the folder appears.
+        """
+        home = os.environ.get("USERPROFILE") or os.path.expanduser("~")
+        try:
+            os.makedirs(os.path.join(home, "Documents", "VBNote USB Drive"), exist_ok=True)
         except OSError:
             pass
 

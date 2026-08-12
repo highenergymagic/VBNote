@@ -36,6 +36,10 @@ pub const DIR: &str = ".VBNote";
 pub const SYSTEM_DISK: &str = "KeysoftSystemDisk.img";
 pub const FLASH_DISK: &str = "FlashDisk.img";
 pub const ONEWIRE: &str = "onewire.img";
+/// The removable drive files are moved on and off the machine with.
+pub const USB_DISK: &str = "UsbDrive.vhd";
+/// The folder on the host that it is kept in step with.
+pub const USB_FOLDER: &str = "VBNote USB Drive";
 pub const SETTINGS: &str = "VBNote.ini";
 
 /// The settings file as shipped, comments and all.
@@ -62,6 +66,16 @@ cpu_mhz = 63
 # the keyboard in the meantime. Only a backstop; keys are normally released as
 # soon as the machine has seen them.
 key_hold_ms = 800
+
+# How big to make the removable drive, in megabytes, the first time it is
+# made. Files put in the VBNote USB Drive folder in Documents are on it when
+# the machine starts, and anything it wrote is back in that folder when it stops.
+#
+# Changing this afterwards does nothing on its own: the drive is laid out when
+# it is created, so delete UsbDrive.vhd to have a new one made. Bigger is not
+# better -- asking the machine how much space is free means reading the whole
+# of the drive's index, and a large drive takes noticeably longer to answer.
+usb_disk_mb = 256
 
 # Turn the sound off entirely. yes or no.
 mute = no
@@ -94,6 +108,8 @@ pub fn is_set_up(home: &Path) -> bool {
 pub struct Settings {
     pub cpu_mhz: u64,
     pub key_hold_ms: u64,
+    /// How big to make the removable drive, the first time, in megabytes.
+    pub usb_disk_mb: u64,
     pub mute: bool,
     pub debug: bool,
     /// Lines that were not understood, for telling the user about.
@@ -105,6 +121,7 @@ impl Default for Settings {
         Settings {
             cpu_mhz: 63,
             key_hold_ms: 800,
+            usb_disk_mb: 256,
             mute: false,
             debug: false,
             complaints: Vec::new(),
@@ -155,6 +172,7 @@ impl Settings {
             match key.as_str() {
                 "cpu_mhz" => number(value, &mut settings.cpu_mhz, key, &mut complaints),
                 "key_hold_ms" => number(value, &mut settings.key_hold_ms, key, &mut complaints),
+                "usb_disk_mb" => number(value, &mut settings.usb_disk_mb, key, &mut complaints),
                 "mute" => yes_no(value, &mut settings.mute, key, &mut complaints),
                 "debug" => yes_no(value, &mut settings.debug, key, &mut complaints),
                 _ => complaints.push(format!("{key} is not a setting VBNote knows")),
