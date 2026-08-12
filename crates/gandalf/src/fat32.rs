@@ -192,6 +192,15 @@ pub fn format(store: &mut Store, label: &str) -> Result<(), String> {
     let volume_sectors = total - PARTITION_START;
     let spc = sectors_per_cluster(total);
     let reserved: u32 = 32;
+    // Two, the conventional number.
+    //
+    // One was tried, on the theory that counting free space reads every copy
+    // and halving them would halve the wait. It does not: 1,022 sector reads
+    // with one table against 1,023 with two. The guest reads the table
+    // **once** whatever is there, and the block numbers that suggested
+    // otherwise were the single table sitting where the second used to be.
+    // So the second copy is free, and it is the copy a damaged volume is
+    // recovered from.
     let fats: u32 = 2;
 
     // The table has to fit the clusters, and the clusters are what is left
@@ -472,13 +481,15 @@ mod tests {
         );
     }
 
-    /// Both copies are written. A driver is entitled to read either.
+    /// One table, and the boot sector says so. Counting free space reads
+    /// every table there is, so a second copy is a second scan.
     #[test]
     fn there_are_two_tables_and_a_backup_boot_sector() {
         let mut s = formatted(64);
         let b = s.read(PARTITION_START * SECTOR, 512);
         let backup = s.read((PARTITION_START + 6) * SECTOR, 512);
         assert_eq!(b, backup, "the backup boot sector differs");
+        assert_eq!(b[16], 2, "the volume claims a number of tables it has not got");
 
         let reserved = u16::from_le_bytes([b[14], b[15]]) as u64;
         let fat_sectors = u32::from_le_bytes(b[36..40].try_into().unwrap()) as u64;

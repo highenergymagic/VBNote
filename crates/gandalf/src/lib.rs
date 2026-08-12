@@ -111,6 +111,19 @@ pub struct Gandalf {
     /// Data the host is sending in a control transfer, gathered until the
     /// status stage delivers it.
     pub usb_data_out: Vec<u8>,
+    /// How the transfer engine is spending itself: calls made, calls that
+    /// found work, and transfers run. A guest that waits between transfers
+    /// and an engine that will not run them look the same from a command
+    /// count and nothing alike from these.
+    pub usb_calls: u64,
+    pub usb_busy_calls: u64,
+    pub usb_tds: u64,
+    /// A USB frame is a millisecond, and the frame counter is how a driver
+    /// tells time. It was advancing once per service call -- three hundred
+    /// thousand times a second -- which is not a clock, and cost a write into
+    /// the guest's shared area every time the engine looked at an empty list.
+    pub usb_cycles_per_frame: u64,
+    pub usb_next_frame: u64,
     /// Emulated cycles since start.
     pub elapsed: u64,
     /// Accesses that hit nothing at all.
@@ -139,6 +152,11 @@ impl Gandalf {
             usb_setup: None,
             usb_reply: None,
             usb_data_out: Vec::new(),
+            usb_calls: 0,
+            usb_busy_calls: 0,
+            usb_tds: 0,
+            usb_cycles_per_frame: (cpu_hz / 1000).max(1),
+            usb_next_frame: 0,
             elapsed: 0,
             unmapped: BTreeMap::new(),
             pc: 0,

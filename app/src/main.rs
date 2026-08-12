@@ -2591,6 +2591,15 @@ data aborts (distinct):");
                 },
                 dev.summary()
             );
+            let guest = board.elapsed as f64 / 63_000_000.0;
+            println!(
+                "  engine: {} calls, {} found work, {} transfers ({:.0} transfers/guest-second, {:.1} per busy call)",
+                board.usb_calls,
+                board.usb_busy_calls,
+                board.usb_tds,
+                board.usb_tds as f64 / guest.max(0.001),
+                board.usb_tds as f64 / board.usb_busy_calls.max(1) as f64
+            );
         }
         if !hc.unexpected.is_empty() {
             println!("  registers outside the map:");

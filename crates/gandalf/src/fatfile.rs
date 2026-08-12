@@ -535,20 +535,25 @@ mod tests {
         assert_eq!(entries.last().unwrap()[0], 1);
     }
 
-    /// Both tables, because a driver may read either and disagreeing copies
-    /// lose files that were there a moment ago.
+    /// Every table the volume declares is written, whatever that number is.
+    /// These volumes carry one; a volume made elsewhere may carry two, and
+    /// updating only the first leaves a disk that works until something reads
+    /// the other and files vanish that were there a moment ago.
     #[test]
-    fn both_allocation_tables_are_written() {
+    fn every_declared_allocation_table_is_written() {
         let mut v = drive();
         v.create("a.txt", b"x").unwrap();
         let first = v.list()[0].cluster;
 
-        let base = (v.part_start + v.reserved as u64) * SECTOR;
-        let second = base + v.fat_sectors as u64 * SECTOR;
-        let a = v.store.read(base + first as u64 * 4, 4);
-        let b = v.store.read(second + first as u64 * 4, 4);
-        assert_eq!(a, b, "the second table was not updated");
-        assert_ne!(u32::from_le_bytes(a.try_into().unwrap()), 0);
+        for n in 0..v.fats as u64 {
+            let base = (v.part_start + v.reserved as u64 + n * v.fat_sectors as u64) * SECTOR;
+            let entry = v.store.read(base + first as u64 * 4, 4);
+            assert_ne!(
+                u32::from_le_bytes(entry.try_into().unwrap()),
+                0,
+                "table {n} was not updated"
+            );
+        }
     }
 
     /// Cluster 2 is the first real one; 0 and 1 are the table's own.

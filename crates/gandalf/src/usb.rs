@@ -209,16 +209,22 @@ pub fn service(board: &mut Gandalf) -> bool {
         return false;
     }
 
-    // The frame counter is what a driver watches to know the controller is
-    // alive at all, and it is shared through the HCCA as well as the register.
-    board.soc.ohci.fm_number = board.soc.ohci.fm_number.wrapping_add(1);
-    let hcca = board.soc.ohci.hcca;
-    if hcca != 0 {
-        let frame = board.soc.ohci.fm_number as u16;
-        let word = board.read32(hcca + HCCA_FRAME_NUMBER);
-        board.write32(hcca + HCCA_FRAME_NUMBER, (word & 0xFFFF_0000) | frame as u32);
+    // The frame counter is a clock: one frame is one millisecond, and a
+    // driver uses it to time things. Advancing it once per call made it run
+    // three hundred times faster than real, and wrote into the guest's shared
+    // area on every one of fifty-six million calls that found nothing to do.
+    if board.elapsed >= board.usb_next_frame {
+        board.usb_next_frame = board.elapsed + board.usb_cycles_per_frame;
+        board.soc.ohci.fm_number = board.soc.ohci.fm_number.wrapping_add(1);
+        let hcca = board.soc.ohci.hcca;
+        if hcca != 0 {
+            let frame = board.soc.ohci.fm_number as u16;
+            let word = board.read32(hcca + HCCA_FRAME_NUMBER);
+            board.write32(hcca + HCCA_FRAME_NUMBER, (word & 0xFFFF_0000) | frame as u32);
+        }
     }
 
+    board.usb_calls += 1;
     let mut ran = 0;
     if control & CONTROL_LIST_ENABLE != 0 {
         ran += run_list(board, board.soc.ohci.control_head_ed, MAX_TDS);
@@ -232,6 +238,8 @@ pub fn service(board: &mut Gandalf) -> bool {
     board.soc.ohci.command_status &= !(CONTROL_LIST_FILLED | BULK_LIST_FILLED);
 
     if ran > 0 {
+        board.usb_busy_calls += 1;
+        board.usb_tds += ran as u64;
         hand_over_done_queue(board);
     }
     ran > 0

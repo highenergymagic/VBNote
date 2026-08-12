@@ -228,7 +228,11 @@ impl UsbDisk {
             0x12 => {
                 let mut d = vec![0u8; 36];
                 d[0] = 0x00; // direct access block device
-                d[1] = 0x80; // removable
+                // Removable, which is what it is. Declaring it fixed was
+                // tried, on the theory that the media-presence checks around
+                // every read came from this bit: 2,049 TEST UNIT READYs
+                // against 2,147, so they do not.
+                d[1] = 0x80;
                 d[2] = 0x02; // SCSI-2
                 d[3] = 0x02;
                 d[4] = 31; // additional length
