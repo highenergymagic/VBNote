@@ -189,6 +189,8 @@ struct Options {
     usb_disk_mb: usize,
     /// Host folder kept in step with the drive.
     usb_folder: Option<String>,
+    /// Sample the program counter, to find where guest time goes.
+    sample_pc: bool,
     /// Record `r1` every time this address is executed, keeping the last few.
     ///
     /// Aimed at a dispatcher: the sequence of message ids leading up to a
@@ -246,6 +248,7 @@ fn parse_args() -> Result<Options, String> {
         usb_disk: None,
         usb_disk_mb: 64,
         usb_folder: None,
+        sample_pc: false,
         trace_at: None,
     };
     // Whether anything was asked for at all. A bare launch is the Start menu.
@@ -403,6 +406,7 @@ fn parse_args() -> Result<Options, String> {
                 opts.key_gpio = v.parse().map_err(|_| "--key-gpio needs a number")?;
             }
             "--trace-pc" => opts.trace_pc = true,
+            "--sample-pc" => opts.sample_pc = true,
             "--trace-cpld" => opts.trace_cpld = true,
             "-h" | "--help" => {
                 println!(
@@ -487,6 +491,8 @@ fn parse_args() -> Result<Options, String> {
                      \x20 --stop-on-watch      stop at the first such access\n\
                      \x20 --trace-at ADDR      trace instructions from there on\n\
                      \x20 --trace-pc           trace every instruction, which is very slow\n\
+                     \x20 --sample-pc          count where the guest's time goes, and\n\
+                     \x20                      list the worst offenders at the end\n\
                      \x20 --trace-cpld         print every CPLD access\n\
                      \n\
                      Example:\n\
@@ -1637,6 +1643,14 @@ fn run(
     // when it happens, rarely enough to cost nothing.
     let progress_every = opts.cpu_hz;
     let mut next_progress = progress_every;
+
+    // Where the guest's time actually goes. Sampling the program counter
+    // every few thousand cycles and counting what comes up is enough to tell
+    // work from waiting -- and telling those apart is the whole question when
+    // something is slow but correct.
+    let mut samples: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
+    let sample_every: u64 = 4096;
+    let mut next_sample = sample_every;
     let mut progress = progress::Progress::new();
 
     // How often the card is written back. Two seconds of the guest's time,
@@ -1659,6 +1673,11 @@ fn run(
         if stop.load(std::sync::atomic::Ordering::Relaxed) {
             early = Some(Outcome::Interrupted);
             break;
+        }
+
+        if opts.sample_pc && spent >= next_sample {
+            next_sample = spent + sample_every;
+            *samples.entry(cpu.r[15]).or_insert(0) += 1;
         }
 
         if spent >= next_progress {
@@ -2366,6 +2385,16 @@ last {} values of r1 at the traced address:", dispatched.len());
             println!("  {}", line.join("  "));
         }
     }
+    if !samples.is_empty() {
+        let mut top: Vec<(u32, u64)> = samples.into_iter().collect();
+        top.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        let total: u64 = top.iter().map(|(_, n)| *n).sum();
+        println!("\nwhere the guest spent its time ({total} samples):");
+        for (pc, n) in top.iter().take(20) {
+            println!("  {pc:#010x}  {:>5.1}%  {n}", *n as f64 * 100.0 / total as f64);
+        }
+    }
+
     early.unwrap_or(Outcome::CycleLimitWithLoop(recent))
 }
 
