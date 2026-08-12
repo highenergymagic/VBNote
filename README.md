@@ -186,8 +186,8 @@ Building the installer needs Rust, PyInstaller and Inno Setup 6:
 powershell -File installer\build.ps1
 ```
 
-It is also built on every push by GitHub Actions, which is the arrangement that
-keeps it working.
+Tagging a version builds it on GitHub Actions and publishes the release, which
+is where the installer people download comes from.
 
 ## Licence
 

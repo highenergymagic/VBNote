@@ -11,6 +11,7 @@
 
 # Scratch analysis output
 /tools/extracted/
+/tools/ghidra/
 /tools/ghidraproj/
 __pycache__/
 

@@ -1,18 +1,19 @@
 name: build
 
-# Two jobs. The tests run on everything; the installer is built on every push
-# to main so there is always a current one to download, and attached to a
-# release when a version is tagged.
+# Releases only. Tag a version and this runs the tests, builds the installer
+# and publishes it; an ordinary push to main runs nothing.
 #
 # The installer is built here rather than on a developer's machine on purpose.
 # It needs Rust, PyInstaller and Inno Setup, and a build that only ever
 # happens where all three already are is a build that quietly stops working.
+#
+# Nothing checks main between releases, so `cargo test --workspace` and
+# `cargo clippy --all-targets -- -D warnings` are a developer's job before
+# pushing. Run this by hand from the Actions tab to check without tagging.
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-  pull_request:
   workflow_dispatch:
 
 env:
