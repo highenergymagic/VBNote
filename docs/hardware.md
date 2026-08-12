@@ -872,6 +872,77 @@ touched from `0x96c88414` and `0x96c88448`). `0x404` is plausibly on the audio
 path. `0x400` is not, whatever its proximity to codec setup suggests: it is
 the braille shift register, and the OAL bit-bangs the display through it.
 
+## The removable-storage stacks, and which one is worth driving
+
+Measured from the ROM and from boots, August 2026. All three sockets appear
+in the OEMAddressTable above; what follows is which drivers sit behind them
+and which of those actually do anything.
+
+### USB, and it is the live one
+
+The whole host stack is in the ROM as XIP modules:
+
+| module | at | |
+|---|---|---|
+| `ohci.dll` | `0x0233_0000` | host controller |
+| `usbd.dll` | `0x0396_0000` | bus driver |
+| `usbmsc.dll` | `0x0394_0000` | mass storage class |
+| `usbdisk6.dll` | `0x0393_0000` | the block device above it |
+
+It is this board's own rather than a leftover: the OHCI PDD carries the
+source path `platform\gandalf\drivers\usb\ohcd\ohcdpdd\ohcdpdd.cpp`.
+`Drivers\BuiltIn\OHCI` configures it with `MemBase` and `Irq`, and
+`Mass_Storage_Class` and `Drivers\USB\ClientDrivers` are both registered.
+
+The controller is at `0x4C00_0000`: standard OHCI operational registers at
+their usual offsets, then three of Intel's own above them -- `UHCHR` at
+`0x64`, `UHCHIE` at `0x68`, `UHCHIT` at `0x6C`. **`0x4c000064` is `UHCHR`,
+not `HcRhPortStatus[1]`**; reading a boot log against the standard OHCI map
+alone gets that wrong.
+
+On a boot the driver resets the controller, writes an HCCA at a real SDRAM
+address, sets `HcFmInterval` to `0x48700000`, enables the master interrupt,
+powers the root hub, and asks `HcRhDescriptorA` how many ports it has. It
+claims **IRQ 3 and IRQ 2** through `RequestSysIntr` at `wce32ddk.dll`
+`0x02251070` -- the machine's two host ports.
+
+The client side is live too: `bvd_udc_ser.dll` at `0x0231_0000` touches the
+PXA270 UDC at `0x4060_0000` on every boot. That is the Mini-USB port.
+
+### PCMCIA and CompactFlash, and why they are the fallback
+
+`pcmcia.dll` (`0x022c_0000`), `atadisk.dll` (`0x03e1_0000`), `mspart.dll`
+(`0x03db_0000`) and `fatfsd.dll` (`0x03f2_0000`) are all present.
+`Drivers\BuiltIn\PCMCIA` loads card services;
+`System\StorageManager\Profiles\CompactFlash` mounts a card as
+`\CompactFlash` with AutoMount and AutoPart; `Drivers\PCMCIA\Detect\50` runs
+`DetectATADisk` for any card no named key matches.
+
+`pcmcia.dll`'s own window table at `0x022ce150` gives the same socket
+addresses the OEMAddressTable does -- common memory `0x2000_0000`,
+attribute `0x2800_0000`, I/O `0x2C00_0000`, and the same again
+`0x1000_0000` higher for socket 1. Two independent sources agreeing.
+
+But it does nothing. Its `DllMain` (`0x022cc8d4`) runs, its `Init`
+(`0x022c8504`) is called, and the hardware probe at `0x022c7cf8` returns
+success -- then nothing follows: no `CardGetStatus`, no CPLD access from its
+address range, no read of card space, and **no `RequestSysIntr` at all**.
+That points at its socket enumeration finding zero sockets rather than at a
+missing detect signal. It reaches hardware through `wce32ddk.dll`
+(`g_pGPIORegs`, `g_pMEMCRegs`) and `CPLD2.dll` (`GetCPLDWord`,
+`SetCPLDPin`), which is why searching the module for hardware addresses
+finds none.
+
+### The empty DiskOnChip sockets
+
+`nCS1` and `nCS3` are unfitted, and `trueffs.dll` never accepts it. It spends
+about fifteen percent of the machine's running time polling them:
+**30,698,285 reads in one boot**, all but seventy-nine at a single offset.
+Reading all ones it waits at `0x081C` for a bit to clear; answer zero there
+and it waits at `0x080E` for a bit to set. Opposite polarities, so no fixed
+value ends it -- it wants a handshake, and that needs a device model rather
+than a constant.
+
 ## Why this device is unusually tractable to emulate
 
 - **No display.** The display driver is `ddi_nop.dll`, a null DDI. Output is

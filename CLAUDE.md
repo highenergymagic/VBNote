@@ -7,8 +7,8 @@ preservation — these machines are dying and cannot be replaced.
 ## Hard constraints
 
 - **Never commit firmware.** `NK.bin`, `EBOOT.bin`, ROM dumps, flash images are
-  HumanWare's copyright. `.gitignore` covers `*.bin`, `/roms/`, `*.pe`,
-  `*.wav`, `/work/`. Check before `git add -A`.
+  HumanWare's copyright. `.gitignore` covers `*.bin`, `*.img`, `/roms/`,
+  `*.pe`, `*.wav`, `/work/`. Check before `git add -A`.
 - **Braille output is out of scope.** Target is the VoiceNote QT, no cells.
 - **GPL-2.0-only**, so QEMU source can be drawn on.
 - **Zero-configuration, keyboard-only, self-voicing.** The user is blind; the
@@ -125,14 +125,13 @@ vbnote roms/EBOOT.bin --flash --nk roms/NK.bin --cpu-mhz 63 \
   clean speech and a machine that stutters so badly it sounds broken: at 1200
   the emulator holds **6%** of real time, and the guest makes its audio in
   guest time, so six percent of real time is six percent of the sound with the
-  device draining the rest as silence. Higher is not faster. The old default
-  was the single easiest way to waste an afternoon — every measurement in a session costs four times what it
-  should. The default is 1200, which assumes a core far faster than this
-  interpreter, so the firmware's delay loops burn cycles waiting. 63 matches
-  what this host retires: speed 73% against 5%, first sound at 4.8 G cycles
-  against 11.3 G. The default is high because guest time running fast relative
-  to guest progress lets the power manager's idle timeout suspend the machine
-  mid-boot; 63 is measured not to.
+  device draining the rest as silence. Higher is not faster.
+  1200 assumed a core far faster than this interpreter, so the firmware's
+  delay loops burned cycles waiting; 63 matches what this host retires --
+  speed 73% against 5%, first sound at 4.8 G cycles against 11.3 G. It cannot
+  go much lower either: guest time running slowly relative to guest progress
+  lets the power manager's idle timeout suspend the machine mid-boot, and 63
+  is measured not to.
 - `--help` lists every option; all are documented there.
 - A **fresh card fails its first boot** ("flash disk is unavailable") because
   formatting is still running. Boot again against the same file.
@@ -712,6 +711,75 @@ off, so UTC would be wrong by the offset. Without this the machine asks three
 clock questions out loud at every boot, to somebody who cannot see the screen.
 
 ## Open problems
+
+0. **Instruction fetch is already free, so a JIT has to generate code.**
+   Built, measured and thrown away: a direct-mapped cache of
+   already-fetched instruction words, in runs of sixteen, keyed by physical
+   address, holding the ROM the firmware executes in place from. It worked --
+   **81.6 M hits, 146 K misses, a 99.8% hit rate, three flushes across a
+   boot** -- and made **no measurable difference**: 33.97 s against 34.24 s
+   over four billion cycles, which is noise.
+
+   So removing the translate and the fetch from every instruction buys
+   nothing, and the cost is all in decode and dispatch. That agrees with the
+   note below about the real workload running within 25% of a microbenchmark
+   executing nothing but `add`, and it means **there is no cheap intermediate
+   step**: block caching, threading, predecoding into a table -- anything that
+   keeps interpreting one instruction at a time -- is attacking the wrong
+   half. The win needs native code, or nothing.
+
+   The code is not kept. It was a hundred lines of correctness hazard around
+   self-modifying code and exceptions in exchange for zero, which is the same
+   trade the audio rate controller lost.
+
+0.5 **A block-at-a-time compiler was built, and lost to the interpreter.**
+   Built on a branch since deleted: Cranelift, ARM data processing with all
+   sixteen conditions, checked against the interpreter over 832 flag cases and
+   240 condition cases. It works and it is correct. It is also **6% slower**
+   than interpreting, and the counters say exactly why.
+
+   **Coverage is 15%** of instructions, and blocks average **six**
+   instructions. What ends them, counted over a boot:
+
+   | load or store | 8,582 |
+   | branch | 8,258 |
+   | shifted register operand | 2,390 |
+   | load or store multiple | 1,939 |
+   | shift by register, multiply, halfword | 1,449 |
+
+   Loads and branches are 73% between them. Shifted operands -- the guess --
+   are 10%.
+
+   **Ahead-of-time compilation does not fix this**, and it is worth writing
+   down so it is not re-argued. Compilation cost was never the problem: 442
+   blocks, on a boot, is nothing. Coverage is a property of what the
+   translator understands, not of when it runs, and a six-instruction block is
+   six instructions whenever it is built. What would help is a **larger unit
+   of translation** -- a whole routine with its branches inside it, entered
+   once and run for hundreds of instructions -- and AOT's real advantage is
+   that it can afford the analysis that needs. The hard parts are the same
+   either way: memory operations that can fault, and reconstructing guest
+   state when one does part way through a translated region.
+
+   Two process notes, both bought the hard way. A wrong optimisation and a
+   slow one **look identical on a stopwatch**: the register-narrowing change
+   was measured for speed, committed, and only later found to stop the machine
+   booting. And single-instruction differential tests cannot catch a
+   whole-block bug, because a one-instruction block has nothing to get wrong.
+   Every change here needs a boot to first speech, not a clock reading.
+
+0.75 **Idle skipping does not pay, and the reason generalises.** The kernel
+   spends much of a boot halted: `0x80084f48` is `mcr p14, 0, r0, c7, c0`
+   with r0 = 1, the XScale idle-mode write, and the address `--sample-pc`
+   puts 39% of its samples on is the `bx lr` straight after it. Skipping
+   ahead to the next OS timer match instead of stepping a halted core one
+   cycle at a time made **no difference**: 77.8 s against 72-76 s.
+
+   Because **39% was of samples, not of host time**. A halted step does no
+   translate, no fetch and no decode; it was already nearly free. That
+   distinction is worth carrying to the next idea: a profile of *guest cycles*
+   says where the guest spends itself, and says almost nothing about where the
+   emulator does.
 
 1. **Speed.** 65 M cycles/s, 15.3 ns an emulated cycle, against 3.2 ns for a
    real PXA270. The cheap wins are taken: device ticking was over half the

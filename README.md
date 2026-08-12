@@ -45,8 +45,9 @@ You get three things on the Start menu:
 ## Setting up, once
 
 Run **Set up VBNote**. It asks you to agree to the two conditions above, then
-where your `EBOOT.bin` and `NK.bin` are, and then it builds your machine while
-you wait. It takes about ten minutes.
+where your `EBOOT.bin` and `NK.bin` are, then how big the drive for moving
+files should be, and then it builds your machine while you wait. It takes
+about ten minutes.
 
 Most of that is not the computer being slow. It is the machine genuinely
 starting up for the first time, formatting its flash disk and answering its own
@@ -61,6 +62,7 @@ When it finishes, everything lives in `%USERPROFILE%\.VBNote`:
 | `KeysoftSystemDisk.img` | the machine's ROM: bootloader and operating system |
 | `FlashDisk.img` | **your flash disk — your documents live here** |
 | `onewire.img` | the machine's identity |
+| `UsbDrive.vhd` | the drive for moving files on and off |
 | `VBNote.ini` | settings |
 
 Back up `FlashDisk.img` the way you would back up any other documents.
