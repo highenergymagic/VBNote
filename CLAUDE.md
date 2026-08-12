@@ -525,12 +525,50 @@ The route for getting files in and out, and the go/no-go is **measured**:
   read.** That is a live socket driver with an empty slot: card services
   initialises, and the ATA driver is loaded only when a card is detected. The
   work is presenting a card, not making CE care about one.
-- **There is no USB mass storage in this ROM** -- no `usbdisk.dll`, no
-  `MassStorage`, no `UHCI`. CF is the only removable route there is.
+- **The board has two slots**, a PC Card slot and a CF slot, which is what
+  `pcmcia.dll`'s table describes as socket 0 and socket 1. Only socket 0 is
+  wired in the emulator so far; which slot is which is not yet established.
 - Not modelled yet: card space is **not in the memory map at all**, and the
   static memory controller at `0x4800_0000` is a plain register file, so
   `MECR`/`MCMEM0`/`MCATT0`/`MCIO0` are absorbed silently. Socket registers
   being *mapped* is why an unmapped-access report cannot see them.
+
+## USB mass storage, the other way in
+
+**This ROM has the whole USB host stack, and an earlier note here saying it
+did not was wrong.** That claim came from grepping a list of guessed
+filenames -- `usbdisk.dll`, `MassStorage`, `UHCI` -- and concluding from
+their absence. The module table settles it instead:
+
+| module | at | |
+|---|---|---|
+| `ohci.dll` | `0x0233_0000` | USB host controller |
+| `usbd.dll` | `0x0396_0000` | USB bus driver |
+| `usbmsc.dll` | `0x0394_0000` | mass storage class |
+| `usbdisk6.dll` | `0x0393_0000` | the block device above it |
+
+And it is *this board's* driver, not a generic one left in the image: the
+OHCI PDD carries its own source path,
+`c:\wince420\platform\gandalf\drivers\usb\ohcd\ohcdpdd\ohcdpdd.cpp` --
+`platform\gandalf`, which is where this crate's name comes from. It is a
+built-in driver, `Drivers\BuiltIn\OHCI`, configured with `MemBase` and `Irq`,
+and `Mass_Storage_Class` and `Drivers\USB\ClientDrivers` are both in the
+registry. The machine has two USB host ports.
+
+The trade against CompactFlash, honestly:
+
+- **CF is one unknown from working** and the unknown is board-specific and
+  undocumented: which interrupt announces card detect.
+- **USB has no unknown of that kind.** OHCI is a published specification and
+  a device appearing is a root-hub port status change *inside the controller
+  being emulated* -- there is no board secret to reverse. But it is far more
+  code: endpoint and transfer descriptor lists, enumeration over control
+  transfers, bulk transport, then SCSI on top (`INQUIRY`, `READ CAPACITY`,
+  `READ(10)`, `WRITE(10)`, `TEST UNIT READY`, `REQUEST SENSE`).
+
+So CF first because it is nearly done, USB as the fallback that cannot be
+blocked by something unknowable. **Do not record "X is not in this ROM"
+again from a filename search that came up empty** -- check the module table.
 
 The intended shape, so it does not get redesigned by accident:
 
