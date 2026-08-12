@@ -21,6 +21,7 @@ pub mod modem;
 pub mod nkp;
 pub mod onewire;
 pub mod patch;
+pub mod pcmcia;
 pub mod power;
 pub mod provision;
 pub mod registry;
@@ -91,6 +92,8 @@ pub struct Gandalf {
     power_divider: u32,
     /// The EEPROM holding the machine's serial number, on GPIO 22.
     pub onewire: onewire::OneWire,
+    /// The PCMCIA/CompactFlash socket, and whatever is in it.
+    pub pcmcia: pcmcia::Socket,
     /// Emulated cycles since start.
     pub elapsed: u64,
     /// Accesses that hit nothing at all.
@@ -114,6 +117,7 @@ impl Gandalf {
             power: PowerState::default(),
             power_divider: 0,
             onewire: onewire::OneWire::default(),
+            pcmcia: pcmcia::Socket::new(),
             elapsed: 0,
             unmapped: BTreeMap::new(),
             pc: 0,
@@ -320,6 +324,10 @@ impl Bus for Gandalf {
             CPLD_BASE => self.cpld_read(pa & 0xFFFFF) as u8,
             DOC_NCS1_BASE | DOC_NCS3_BASE => 0xFF,
             b if is_soc(b) => self.soc.read8(pa),
+            b if is_card_space(b) => {
+                let pc = self.pc;
+                self.pcmcia.read(pa, 1, pc) as u8
+            }
             _ => dispatch_read!(self, pa, u8, u8::from_le_bytes),
         }
     }
@@ -329,6 +337,10 @@ impl Bus for Gandalf {
             CPLD_BASE => self.cpld_read(pa & 0xFFFFF),
             DOC_NCS1_BASE | DOC_NCS3_BASE => 0xFFFF,
             b if is_soc(b) => self.soc.read16(pa),
+            b if is_card_space(b) => {
+                let pc = self.pc;
+                self.pcmcia.read(pa, 2, pc) as u16
+            }
             _ => dispatch_read!(self, pa, u16, u16::from_le_bytes),
         }
     }
@@ -338,6 +350,10 @@ impl Bus for Gandalf {
             CPLD_BASE => self.cpld_read(pa & 0xFFFFF) as u32,
             DOC_NCS1_BASE | DOC_NCS3_BASE => 0xFFFF_FFFF,
             b if is_soc(b) => self.soc.read32(pa),
+            b if is_card_space(b) => {
+                let pc = self.pc;
+                self.pcmcia.read(pa, 4, pc)
+            }
             _ => {
                 if let Some(off) = Gandalf::sdram_off(pa) {
                     return u32::from_le_bytes(self.sdram[off..off + 4].try_into().unwrap());
@@ -355,6 +371,10 @@ impl Bus for Gandalf {
         match pa & 0xFFF0_0000 {
             CPLD_BASE => self.cpld_write(pa & 0xFFFFF, val as u16),
             b if is_soc(b) => self.soc.write8(pa, val),
+            b if is_card_space(b) => {
+                let pc = self.pc;
+                self.pcmcia.write(pa, val as u32, 1, pc)
+            }
             _ => {
                 if let Some(off) = Gandalf::sdram_off(pa) {
                     self.sdram[off] = val;
@@ -371,6 +391,10 @@ impl Bus for Gandalf {
         match pa & 0xFFF0_0000 {
             CPLD_BASE => self.cpld_write(pa & 0xFFFFF, val),
             b if is_soc(b) => self.soc.write16(pa, val),
+            b if is_card_space(b) => {
+                let pc = self.pc;
+                self.pcmcia.write(pa, val as u32, 2, pc)
+            }
             _ => {
                 if let Some(off) = Gandalf::sdram_off(pa) {
                     self.sdram[off..off + 2].copy_from_slice(&val.to_le_bytes());
@@ -393,6 +417,10 @@ impl Bus for Gandalf {
                 if b == pxa270::gpio::BASE & 0xFFF0_0000 {
                     self.drive_onewire();
                 }
+            }
+            b if is_card_space(b) => {
+                let pc = self.pc;
+                self.pcmcia.write(pa, val, 4, pc)
             }
             _ => {
                 if let Some(off) = Gandalf::sdram_off(pa) {
@@ -479,6 +507,16 @@ fn is_soc(base: u32) -> bool {
         | 0x4C00_0000              // USB host OHCI
         | 0x5C00_0000              // internal SRAM
     )
+}
+
+/// The two PCMCIA sockets' card space, `0x2000_0000` to `0x3FFF_FFFF`.
+///
+/// Decoded by the static memory controller rather than being a peripheral, so
+/// it is not part of `is_soc` -- and it used to hit nothing at all, which is
+/// why an unmapped-access report of a boot showed the socket as untouched.
+#[inline]
+fn is_card_space(base: u32) -> bool {
+    (pcmcia::BASE..=pcmcia::END).contains(&base)
 }
 
 #[cfg(test)]

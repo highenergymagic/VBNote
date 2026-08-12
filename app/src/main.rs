@@ -175,6 +175,12 @@ struct Options {
     sd_card: Option<String>,
     /// Size of a card created fresh, in megabytes.
     sd_card_mb: usize,
+    /// Image file backing the card in the CompactFlash slot, or None for an
+    /// empty slot. This is the transfer volume, not the machine's storage:
+    /// documents live on the flash disk.
+    cf_card: Option<String>,
+    /// Size of a CompactFlash card created fresh, in megabytes.
+    cf_card_mb: usize,
     /// Record `r1` every time this address is executed, keeping the last few.
     ///
     /// Aimed at a dispatcher: the sequence of message ids leading up to a
@@ -227,6 +233,8 @@ fn parse_args() -> Result<Options, String> {
         sd_card: Some("FlashCard.img".to_string()),
         serial_eeprom: Some("SerialNumber.bin".to_string()),
         sd_card_mb: 128,
+        cf_card: None,
+        cf_card_mb: 64,
         trace_at: None,
     };
     // Whether anything was asked for at all. A bare launch is the Start menu.
@@ -327,6 +335,11 @@ fn parse_args() -> Result<Options, String> {
                 opts.serial_eeprom = Some(args.next().ok_or("--serial-eeprom needs a path")?);
             }
             "--no-serial-eeprom" => opts.serial_eeprom = None,
+            "--cf-card" => opts.cf_card = Some(args.next().ok_or("--cf-card needs a path")?),
+            "--cf-card-mb" => {
+                let v = args.next().ok_or("--cf-card-mb needs a size")?;
+                opts.cf_card_mb = v.parse().map_err(|_| "--cf-card-mb needs a number")?;
+            }
             "--sd-card-mb" => {
                 let v = args.next().ok_or("--sd-card-mb needs a size")?;
                 opts.sd_card_mb = v.parse().map_err(|_| "--sd-card-mb needs a number")?;
@@ -404,6 +417,10 @@ fn parse_args() -> Result<Options, String> {
                      \x20 --sd-card PATH       an SD card image, made if it is not there\n\
                      \x20 --sd-card-mb N       how big to make one (default 128)\n\
                      \x20 --no-sd-card         run with the card slot empty\n\
+                     \x20 --cf-card PATH       a CompactFlash card image, made if it is\n\
+                     \x20                      not there. This is the transfer volume:\n\
+                     \x20                      CE mounts it as \\CompactFlash\n\
+                     \x20 --cf-card-mb N       how big to make one (default 64)\n\
                      \n\
                      Getting KeySoft to start:\n\
                      \x20 These undo what the emulator does by default to a firmware image whose\n\
@@ -696,6 +713,26 @@ fn main() {
             }
         };
         board.soc.mmc.card = Some(card);
+    }
+
+    // The card in the CompactFlash slot. Nothing in the guest needs adding
+    // for this: pcmcia.dll is already loaded, and the registry sends an
+    // unrecognised fixed-disk card to DetectATADisk and then to the
+    // CompactFlash storage profile, which mounts it as \CompactFlash.
+    if let Some(path) = &opts.cf_card {
+        use gandalf::pcmcia::Card;
+        let card = match std::fs::read(path) {
+            Ok(raw) => {
+                println!("cf card: {} MB, from {path}", raw.len() / (1024 * 1024));
+                Card::with_data(raw)
+            }
+            Err(_) => {
+                let card = Card::blank((opts.cf_card_mb * 1024 * 1024 / 512) as u32);
+                println!("cf card: {} MB, blank", opts.cf_card_mb);
+                card
+            }
+        };
+        board.pcmcia.insert(card);
     }
 
     // The serial number lives in a 1-Wire EEPROM on GPIO 22, and KeySoft will
@@ -2416,6 +2453,23 @@ data aborts (distinct):");
             for line in text.lines() {
                 println!("    {line}");
             }
+        }
+    }
+
+    // What the PCMCIA socket was asked for. An empty list means card services
+    // never looked, which is a different fault from a card it looked at and
+    // rejected -- and telling those two apart is most of the work.
+    if !board.pcmcia.log.is_empty() {
+        println!(
+            "\nCompactFlash socket: {} distinct addresses touched, card {}",
+            board.pcmcia.log.len(),
+            if board.pcmcia.occupied() { "in" } else { "absent" }
+        );
+        for ((space, off), s) in board.pcmcia.log.iter().take(limit) {
+            println!(
+                "  {space:?} {off:#07x}  {:>5} reads {:>5} writes  last {:#06x}  first pc {:#010x}",
+                s.reads, s.writes, s.last_value, s.first_pc
+            );
         }
     }
 
