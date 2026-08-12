@@ -555,6 +555,33 @@ built-in driver, `Drivers\BuiltIn\OHCI`, configured with `MemBase` and `Irq`,
 and `Mass_Storage_Class` and `Drivers\USB\ClientDrivers` are both in the
 registry. The machine has two USB host ports.
 
+**The OHCI driver is not merely loaded, it has brought the controller all the
+way up**, measured on a normal boot with the registers still unimplemented:
+
+| register | | what the driver did |
+|---|---|---|
+| `0x4c000008` | HcCommandStatus | wrote 1, host controller reset |
+| `0x4c000018` | HcHCCA | wrote `0xa0105000`, a real SDRAM address |
+| `0x4c000034` | HcFmInterval | `0x48700000`, standard 1 ms framing |
+| `0x4c000010` | HcInterruptEnable | `0x80000000`, master interrupt enable |
+| `0x4c000050` | HcRhStatus | `0x00010000`, root hub power on |
+| `0x4c000048` | HcRhDescriptorA | 11 reads, asking how many ports it has |
+| `0x4c000064` | HcRhPortStatus[1] | 9 reads and 8 writes, polling for a device |
+
+It also claims its interrupts: `RequestSysIntr` at `wce32ddk.dll` `0x02251070`
+is called with **IRQ 3 and IRQ 2**, both from `ohci.dll`, which is the two USB
+host ports. (The other claims on a boot are IRQ 22 from `bvdmain_serial.dll`
+and IRQ 10, the modem's shared GPIO source.)
+
+**It sees nothing because the emulator answers `HcRhDescriptorA` with zero,
+which says the root hub has no ports.** The driver believed it, correctly.
+
+By contrast `pcmcia.dll` **never calls `RequestSysIntr` at all**, and touches
+neither the CPLD nor GPIO nor card space on a boot with a card in the slot.
+Its init succeeds -- `0x022c7cf8` returns 1 -- but nothing follows, which
+points at its socket enumeration finding **zero sockets** rather than at a
+missing detect signal. That is a deeper problem than a wrong interrupt.
+
 The trade against CompactFlash, honestly:
 
 - **CF is one unknown from working** and the unknown is board-specific and
@@ -566,9 +593,23 @@ The trade against CompactFlash, honestly:
   transfers, bulk transport, then SCSI on top (`INQUIRY`, `READ CAPACITY`,
   `READ(10)`, `WRITE(10)`, `TEST UNIT READY`, `REQUEST SENSE`).
 
-So CF first because it is nearly done, USB as the fallback that cannot be
-blocked by something unknowable. **Do not record "X is not in this ROM"
-again from a filename search that came up empty** -- check the module table.
+**USB is now the route, and CompactFlash is the fallback** -- the reverse of
+what the first version of this section said. The evidence moved: the USB
+driver is running and asking for a device, and the PCMCIA driver is running
+and asking for nothing. A live driver polling a port beats an inert one, and
+what it polls is specified rather than reverse-engineered.
+
+None of the CompactFlash work is wasted. The image-as-device with a host
+directory as interchange, the volume builder, the export, the host key, the
+size question in the wizard -- all of that is the same whichever transport
+carries the sectors. What changes is the bottom layer: OHCI and bulk-only
+transport with a SCSI subset (`INQUIRY`, `READ CAPACITY`, `READ(10)`,
+`WRITE(10)`, `TEST UNIT READY`, `REQUEST SENSE`) in place of a CIS and an ATA
+task file. `crates/gandalf/src/pcmcia.rs` stays; it is finished and tested,
+and it is what to come back to if USB disappoints.
+
+**Do not record "X is not in this ROM" again from a filename search that came
+up empty** -- check the module table.
 
 The intended shape, so it does not get redesigned by accident:
 
