@@ -113,6 +113,29 @@ impl Store {
         }
     }
 
+    /// Write beyond the disk's own length.
+    ///
+    /// Only one thing is out there: the VHD footer, which belongs to the file
+    /// rather than to the disk. Ordinary writes are refused past the end, and
+    /// should be.
+    pub fn write_past_end(&mut self, at: u64, data: &[u8]) -> Result<(), String> {
+        match self {
+            Store::Memory(v) => {
+                let end = at as usize + data.len();
+                if v.len() < end {
+                    v.resize(end, 0);
+                }
+                v[at as usize..end].copy_from_slice(data);
+                Ok(())
+            }
+            Store::File { file, .. } => {
+                file.seek(SeekFrom::Start(at))
+                    .and_then(|_| file.write_all(data))
+                    .map_err(|e| format!("cannot write the disk footer: {e}"))
+            }
+        }
+    }
+
     pub fn sync(&mut self) {
         if let Store::File { file, .. } = self {
             let _ = file.sync_data();
@@ -303,10 +326,16 @@ pub fn create_sparse(path: &str, bytes: u64) -> Result<Store, String> {
         .map_err(|e| format!("cannot create {path}: {e}"))?;
     #[cfg(windows)]
     mark_sparse(&file);
-    file.set_len(bytes)
+    // Room for the disk and the VHD footer after it. The footer belongs to
+    // the file, not to the disk, so the store's length stays the disk's.
+    file.set_len(bytes + FOOTER)
         .map_err(|e| format!("cannot size {path}: {e}"))?;
     Ok(Store::File { file, len: bytes })
 }
+
+/// The VHD footer's size, and its cookie, which is how one is recognised.
+const FOOTER: u64 = 512;
+const FOOTER_COOKIE: &[u8; 8] = b"conectix";
 
 /// Open one that is already there.
 pub fn open(path: &str) -> Result<Store, String> {
@@ -319,7 +348,20 @@ pub fn open(path: &str) -> Result<Store, String> {
         .metadata()
         .map_err(|e| format!("cannot measure {path}: {e}"))?
         .len();
-    Ok(Store::File { file, len })
+
+    // If the file ends in a VHD footer, the disk is everything before it.
+    // Handing the guest the footer as if it were a sector would put four
+    // stray sectors of metadata at the end of its disk.
+    let mut store = Store::File { file, len };
+    if len > FOOTER {
+        let tail = store.read(len - FOOTER, 8);
+        if tail == FOOTER_COOKIE {
+            if let Store::File { len, .. } = &mut store {
+                *len -= FOOTER;
+            }
+        }
+    }
+    Ok(store)
 }
 
 /// Ask NTFS to keep the unwritten parts of the file costing nothing.

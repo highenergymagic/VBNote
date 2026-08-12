@@ -782,7 +782,12 @@ fn main() {
                 eprintln!("{e}");
                 std::process::exit(1);
             }
+            if let Err(e) = gandalf::vhd::write_footer(&mut store) {
+                eprintln!("{e}");
+                std::process::exit(1);
+            }
             println!("usb disk: {mb} MB, formatted FAT32, {path}");
+            println!("  it is a fixed VHD, so Windows can mount it (needs administrator)");
             store
         };
         let disk = UsbDisk::new(store);

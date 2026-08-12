@@ -29,6 +29,7 @@ pub mod registry;
 pub mod sha256;
 pub mod usb;
 pub mod usbdisk;
+pub mod vhd;
 
 use arm::Bus;
 use cpld::Cpld;
