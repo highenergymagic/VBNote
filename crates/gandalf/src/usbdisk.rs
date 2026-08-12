@@ -22,6 +22,8 @@
 //! The residue is the part everyone gets wrong: it is how many bytes of what
 //! was *asked for* did not arrive, not how many did.
 
+use std::collections::BTreeMap;
+
 use crate::fat32::Store;
 use crate::usb::Device;
 
@@ -71,6 +73,15 @@ pub struct UsbDisk {
     /// Commands seen, so a class driver that bound can be told from one that
     /// never did. Enumeration and use are separate questions.
     pub commands: u64,
+    /// Which commands, and how many of each. A retry loop and a long job
+    /// look identical in a total; they do not look alike in this.
+    pub opcodes: BTreeMap<u8, u64>,
+    /// The last block a read asked for, how often a read asked for the same
+    /// one again, and the furthest it has got. A driver making progress walks
+    /// forward; a stuck one asks for the same block for ever.
+    pub last_read: u32,
+    pub repeated_reads: u64,
+    pub highest_read: u32,
 }
 
 impl UsbDisk {
@@ -89,6 +100,10 @@ impl UsbDisk {
             write_left: 0,
             sense: (0, 0, 0),
             commands: 0,
+            opcodes: BTreeMap::new(),
+            last_read: u32::MAX,
+            repeated_reads: 0,
+            highest_read: 0,
         }
     }
 
@@ -165,6 +180,15 @@ impl UsbDisk {
 
         self.commands += 1;
         let cb = &cbw[15..31];
+        *self.opcodes.entry(cb[0]).or_insert(0) += 1;
+        if cb[0] == 0x28 {
+            let lba = u32::from_be_bytes([cb[2], cb[3], cb[4], cb[5]]);
+            if lba == self.last_read {
+                self.repeated_reads += 1;
+            }
+            self.last_read = lba;
+            self.highest_read = self.highest_read.max(lba);
+        }
         self.scsi(cb);
 
         self.phase = if self.expected == 0 {
@@ -274,6 +298,35 @@ impl UsbDisk {
 impl Device for UsbDisk {
     fn commands(&self) -> u64 {
         self.commands
+    }
+
+    fn summary(&self) -> String {
+        let mut out = String::new();
+        for (op, n) in &self.opcodes {
+            let name = match op {
+                0x00 => "TEST UNIT READY",
+                0x03 => "REQUEST SENSE",
+                0x12 => "INQUIRY",
+                0x1A => "MODE SENSE(6)",
+                0x1B => "START STOP UNIT",
+                0x1E => "PREVENT REMOVAL",
+                0x23 => "READ FORMAT CAPACITIES",
+                0x25 => "READ CAPACITY",
+                0x28 => "READ(10)",
+                0x2A => "WRITE(10)",
+                0x35 => "SYNCHRONIZE CACHE",
+                0x5A => "MODE SENSE(10)",
+                _ => "unknown",
+            };
+            out.push_str(&format!("
+    {op:#04x} {name:<22} x{n}"));
+        }
+        out.push_str(&format!(
+            "
+    reads: highest block {}, {} asked for twice running",
+            self.highest_read, self.repeated_reads
+        ));
+        out
     }
 
     fn address(&self) -> u8 {

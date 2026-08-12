@@ -671,6 +671,36 @@ The intended shape, so it does not get redesigned by accident:
   `taskkill /F` is an ending too -- see the section above for why that is not
   a hypothetical.
 
+## Asking the drive how much space is free
+
+Reported as a lockup, and it is not one: the machine is reading the whole
+allocation table, because that is what free space means on FAT32. Measured by
+counting SCSI opcodes rather than guessed -- `READ+I` on the drive
+information screen gave **2,783 `READ(10)`s and 5,669 `TEST UNIT READY`s**,
+with **zero blocks asked for twice**, and the highest block read was the last
+sector of the second table. A driver walking forward through 8,032 sectors at
+about **185 commands a second**, not a driver stuck.
+
+So the fix is fewer sectors of table, and the lever is the cluster size:
+
+- `sectors_per_cluster` takes the **largest cluster that still leaves 70,000
+  clusters**, rather than following Windows' size bands. A 256 MB drive was
+  landing on 512-byte clusters and an 8,032-sector table; it now gets 2 KB
+  clusters and 2,048. Same repro afterwards: **3,183 commands against 8,462,
+  1,023 reads against 2,783**, and it finishes comfortably inside the window
+  where it used to still be going.
+- 70,000 rather than the bare 65,525 minimum, because a volume sitting
+  exactly on the line is one that some other arithmetic rejects.
+- **A bigger drive is slower to answer this question**, and there is no
+  cluster size that fixes it: 32 KB is FAT32's largest, so 32 GB means a
+  million clusters and an 8 MB table however it is laid out. A reason to keep
+  the default modest.
+
+The counting itself is worth keeping: `UsbDisk` records opcodes, repeated
+reads and the highest block, and the bring-up report prints them. A retry
+loop and a long job look identical in a total and nothing alike in that
+breakdown.
+
 ## The clock
 
 `RCNR` counts seconds from **midnight on 1 January 2010**, not from 1970: left

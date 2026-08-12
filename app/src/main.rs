@@ -2581,14 +2581,15 @@ data aborts (distinct):");
             // assigns one after a successful control transfer, so it cannot
             // be there unless descriptors were read and answered.
             println!(
-                "  device attached, address {}, {} storage commands ({})",
+                "  device attached, address {}, {} storage commands ({}){}",
                 dev.address(),
                 dev.commands(),
                 if dev.address() == 0 {
                     "not enumerated"
                 } else {
                     "enumerated"
-                }
+                },
+                dev.summary()
             );
         }
         if !hc.unexpected.is_empty() {

@@ -160,13 +160,27 @@ fn read_as_much_as_possible(file: &mut File, out: &mut [u8]) -> std::io::Result<
 /// allocation table for a large volume becomes enormous, too large and a
 /// small volume has too few clusters to be FAT32 at all.
 pub fn sectors_per_cluster(total_sectors: u64) -> u32 {
-    let megabytes = total_sectors * SECTOR / (1024 * 1024);
-    match megabytes {
-        0..=260 => 1,
-        261..=8192 => 8,
-        8193..=16384 => 16,
-        _ => 32,
+    // Work down from the largest, and take the first that still leaves enough
+    // clusters to be FAT32. Bigger clusters mean a smaller table, and the
+    // size of that table is not a detail on this machine: asking the drive
+    // how much space is free means **reading the whole of it**, one sector at
+    // a time, and the guest gets through about 185 commands a second.
+    //
+    // A 256 MB drive laid out with 512-byte clusters has an 8,032-sector
+    // table across its two copies, which is a minute of silence when somebody
+    // asks for drive information -- measured, and mistaken for a lockup by
+    // the person who asked. The same drive with 2 KB clusters has 2,048, and
+    // four times less to wait for.
+    //
+    // 70,000 rather than the bare 65,525 minimum: a volume that sits exactly
+    // on the line is one a slightly different arithmetic somewhere else
+    // rejects.
+    for spc in [64u32, 32, 16, 8, 4, 2] {
+        if total_sectors / spc as u64 >= 70_000 {
+            return spc;
+        }
     }
+    1
 }
 
 /// Lay down a partition table and a FAT32 volume.
@@ -499,14 +513,43 @@ mod tests {
 
     /// Cluster sizes follow Windows' table, because a volume it would not
     /// make is a volume it may not want to read.
+    /// Every size still has enough clusters to be FAT32, and gets the
+    /// largest cluster that manages it -- which is the same thing as the
+    /// smallest table.
     #[test]
-    fn cluster_sizes_follow_the_usual_table() {
+    fn clusters_are_as_large_as_they_can_be() {
         let mb = |n: u64| n * 1024 * 1024 / SECTOR;
-        assert_eq!(sectors_per_cluster(mb(64)), 1);
-        assert_eq!(sectors_per_cluster(mb(1024)), 8);
-        assert_eq!(sectors_per_cluster(mb(8192)), 8);
-        assert_eq!(sectors_per_cluster(mb(12 * 1024)), 16);
-        assert_eq!(sectors_per_cluster(mb(32 * 1024)), 32);
+        for size in [64u64, 128, 256, 512, 1024, 4096, 8192, 16 * 1024, 32 * 1024] {
+            let sectors = mb(size);
+            let spc = sectors_per_cluster(sectors);
+            assert!(
+                sectors / spc as u64 >= 65_525,
+                "{size} MB with {spc} sectors a cluster is not FAT32"
+            );
+            if spc < 64 {
+                let bigger = spc * 2;
+                assert!(
+                    sectors / bigger as u64 <= 70_000,
+                    "{size} MB could have used {bigger} sectors a cluster"
+                );
+            }
+        }
+    }
+
+    /// The bug this was found by: a 256 MB drive with 512-byte clusters has
+    /// an 8,032-sector table across both copies, and reading it is a minute
+    /// of silence when somebody asks how much space is free.
+    #[test]
+    fn a_small_drives_table_is_not_enormous() {
+        let mut s = formatted(256);
+        let b = s.read(PARTITION_START * SECTOR, 512);
+        let fats = b[16] as u64;
+        let fat_sectors = u32::from_le_bytes(b[36..40].try_into().unwrap()) as u64;
+        let total = fats * fat_sectors;
+        assert!(
+            total <= 2500,
+            "{total} sectors of table to read for a 256 MB drive"
+        );
     }
 
     /// The largest allowed disk still formats, and its table is a sane size
@@ -518,7 +561,7 @@ mod tests {
         // checks the arithmetic instead of writing it.
         let total = MAX_MEGABYTES as u64 * 1024 * 1024 / SECTOR;
         let spc = sectors_per_cluster(total);
-        assert_eq!(spc, 32);
+        assert_eq!(spc, 64);
         let clusters = total / spc as u64;
         assert!(clusters >= 65525);
         // Four bytes an entry, and it must not swallow the volume.

@@ -189,6 +189,12 @@ pub trait Device {
     fn commands(&self) -> u64 {
         0
     }
+
+    /// What the device has been asked for, broken down, for the bring-up
+    /// report. A total says how busy it was; this says what it was doing.
+    fn summary(&self) -> String {
+        String::new()
+    }
 }
 
 /// Run some of the controller's work. Called from the board's tick.
