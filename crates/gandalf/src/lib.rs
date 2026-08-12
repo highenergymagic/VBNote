@@ -130,6 +130,11 @@ pub struct Gandalf {
     pub unmapped: BTreeMap<u32, AccessStat>,
     /// Updated by the runner before each instruction, for attribution.
     pub pc: u32,
+    /// True from the moment a transfer's completion interrupt is raised until
+    /// the guest queues another. The gap between those two is where the
+    /// drive's latency lives, and it is invisible in a profile of a whole run
+    /// -- so the sampler is gated on this instead.
+    pub usb_awaiting: bool,
 }
 
 impl Gandalf {
@@ -160,6 +165,7 @@ impl Gandalf {
             elapsed: 0,
             unmapped: BTreeMap::new(),
             pc: 0,
+            usb_awaiting: false,
         };
         // Present the sense pins before the guest runs, so the very first
         // read the battery driver makes already sees mains power.

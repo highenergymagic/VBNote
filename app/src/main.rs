@@ -1656,6 +1656,8 @@ fn run(
     // work from waiting -- and telling those apart is the whole question when
     // something is slow but correct.
     let mut samples: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
+    let mut gap_samples: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
+    let mut gap_halted: u64 = 0;
     let sample_every: u64 = 4096;
     let mut next_sample = sample_every;
     let mut progress = progress::Progress::new();
@@ -1685,6 +1687,15 @@ fn run(
         if opts.sample_pc && spent >= next_sample {
             next_sample = spent + sample_every;
             *samples.entry(cpu.r[15]).or_insert(0) += 1;
+            // The same sample again, but only while the drive is waiting to
+            // be asked for something. A profile of a whole run cannot see a
+            // pause that only exists between two events.
+            if board.usb_awaiting {
+                *gap_samples.entry(cpu.r[15]).or_insert(0) += 1;
+                if cpu.halted {
+                    gap_halted += 1;
+                }
+            }
         }
 
         if spent >= next_progress {
@@ -2392,6 +2403,19 @@ last {} values of r1 at the traced address:", dispatched.len());
             println!("  {}", line.join("  "));
         }
     }
+    if !gap_samples.is_empty() {
+        let mut top: Vec<(u32, u64)> = gap_samples.into_iter().collect();
+        top.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
+        let total: u64 = top.iter().map(|(_, n)| *n).sum();
+        println!(
+            "
+what the guest does while the drive waits ({total} samples,              {gap_halted} of them halted):"
+        );
+        for (pc, n) in top.iter().take(12) {
+            println!("  {pc:#010x}  {:>5.1}%  {n}", *n as f64 * 100.0 / total as f64);
+        }
+    }
+
     if !samples.is_empty() {
         let mut top: Vec<(u32, u64)> = samples.into_iter().collect();
         top.sort_by_key(|(_, n)| std::cmp::Reverse(*n));

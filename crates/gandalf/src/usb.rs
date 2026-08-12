@@ -266,6 +266,7 @@ fn run_list(board: &mut Gandalf, head: u32, budget: u32) -> u32 {
             if ed.halted() || ed.head() == ed.tail {
                 break;
             }
+            board.usb_awaiting = false;
             run_td(board, &ed);
             ran += 1;
         }
@@ -423,6 +424,9 @@ fn hand_over_done_queue(board: &mut Gandalf) {
     board.soc.ohci.done_head = 0;
     let soc = &mut board.soc;
     soc.ohci.raise_from_board(INT_WRITEBACK_DONE, &mut soc.intc);
+    // From here until the guest queues its next transfer, it is the guest's
+    // time being spent, not the controller's.
+    board.usb_awaiting = true;
 }
 
 #[cfg(test)]
