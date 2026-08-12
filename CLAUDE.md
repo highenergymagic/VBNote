@@ -670,6 +670,33 @@ The intended shape, so it does not get redesigned by accident:
   `taskkill /F` is an ending too -- see the section above for why that is not
   a hypothetical.
 
+## The drive's transfer latency, and what it is not
+
+Twenty-one to twenty-seven milliseconds pass between one USB transfer and the
+next, which is where the drive's slowness lives. Everything obvious has been
+ruled out by measurement rather than by reading:
+
+- **Not a masked interrupt.** `INTC` mask reads `0x86e00d0c` -- bits 2 and 3,
+  both USB host sources, enabled. Of 7,281 raises exactly **one** happened
+  while masked.
+- **Not a missed one.** 7,281 raised, 7,280 acknowledged, one per transfer.
+- **Not a machine too busy to notice.** 185,743 IRQ exceptions across the run,
+  about 1,060 a second, which is the 1 kHz system tick ticking throughout.
+- **Not polling.** Suppress the writeback interrupt and hand the done queue
+  over silently, and USB stops dead: **0 storage commands** against 3,131, two
+  transfers against seven thousand. The driver does not poll at all; it moves
+  only when interrupted.
+
+So the interrupt is enabled, raised once per transfer, delivered, and acted
+on -- and the driver still advances only once every twenty-seven system ticks.
+The cost is entirely on the guest's side of the interrupt: between the ISR
+being taken and the next transfer being queued.
+
+What has not been done is watching the guest across that gap. `--sample-pc`
+profiles a whole run and the gap is invisible in the total; what it needs is
+sampling gated on a transfer being outstanding, which would say whether the
+IST is waiting to be scheduled, waiting on something else, or doing work.
+
 ## Asking the drive how much space is free
 
 Reported as a lockup, and it is not one: the machine is reading the whole
