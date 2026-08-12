@@ -292,8 +292,19 @@ no use for it, `HELP`/`RPT`/`MENU` being `F1` to `F3`. Right control now means
 what somebody pressing a control key meant rather than nothing.
 
 `host`+`G` capture or release, `host`+`R` reset (440 Hz triangle, 0.5 s),
-`host`+`P` flip the power switch, `host`+`Q` quit -- after a `MessageBoxW`
-asking, because a screen reader can read a real dialog.
+`host`+`Q` quit -- after a `MessageBoxW` asking, because a screen reader can
+read a real dialog.
+
+**There is no `host`+`P` any more, and no `PATH.power`.** The power switch was
+removed in 1.1.1: it confused people, and it lost their work. Switching off
+suspends rather than shuts down, and **the loss is on the guest's side, not
+this one** -- CE and KeySoft still hold the open document, its directory entry
+and the FAT updates in RAM, and a suspend never asks them to write any of it
+out because on a real machine that RAM stays alive. Quitting from suspend
+throws it away, so the card is missing metadata the emulator was never given
+and no amount of flushing on this side could have helped. The card image
+itself was always written correctly. Everything below still stands, and the
+guest can still suspend itself on its own idle timeout, so the model stays.
 
 Three rules that are not arbitrary:
 
@@ -383,8 +394,10 @@ NVDA's own install directory -- it ships bundled with applications that use it
 
 ## Reset, the power switch, and the erased boot block
 
-`host`+`R` and `host`+`P` both start the machine over, and getting there found
-a real fault underneath.
+`host`+`R` starts the machine over, and getting there found a real fault
+underneath. The power switch this describes is **no longer reachable by the
+user** -- see above for why -- but the guest still suspends itself on its own
+idle timeout, so all of this is still live.
 
 - **The guest erases the block the bootloader lives in**, a few seconds into
   every boot. The erase asks for `0x20000`; `bus_block_size()` is 256 KB

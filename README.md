@@ -26,7 +26,7 @@ That is all. Everything else is in the installer.
 
 ## Installing
 
-Download `VBNote-1.1.0-setup.exe` from
+Download `VBNote-1.1.1-setup.exe` from
 [Releases](https://github.com/highenergymagic/VBNote/releases) and run it.
 
 It installs for you alone and does not ask for an administrator. Windows may
@@ -98,7 +98,6 @@ F11 never reaches the machine. Held with a letter, it talks to the emulator:
 | --- | --- |
 | **F11 + G** | take the keyboard, or give it back |
 | **F11 + R** | reset the machine |
-| **F11 + P** | the power switch |
 | **F11 + Q** | quit, saving your flash disk |
 
 **Start by pressing F11 + G.** Until you do, your keys go to Windows
@@ -113,8 +112,19 @@ keystrokes in other programs.
 ### While it starts
 
 A cold start takes about a minute and a half, the same as the real machine, and
-it is silent for most of that. VBNote beeps quietly every five seconds until
-the machine finds its voice, so you know it is still working.
+it is silent for most of that. VBNote says what it is doing as it goes —
+"Windows starting", "Loading drivers", "Keyboard ready" — and if a stage is
+taking a while it says so rather than going quiet. Once the machine has its own
+voice, VBNote stops talking over it.
+
+### There is no power switch
+
+The real machine has one; VBNote does not. Switching it off suspends the
+machine rather than shutting it down, and because VBNote cannot yet resume from
+that, **anything you had open when you switched off was lost** — the machine
+keeps unsaved work in memory that a real one would have kept alive. Rather than
+leave a control that quietly costs people their documents, it is gone. Use
+**F11 + Q** to quit, which saves your flash disk properly.
 
 ## Settings
 
@@ -157,9 +167,8 @@ Problems go to
   cells. There is no braille display support and none is planned.
 - **The modem's line.** The machine finds its modem and talks to it, but it is
   not connected to anything, so there is no dialling out.
-- **Resume from sleep.** The power switch suspends the machine and switching it
-  back on starts it fresh, where a real one would pick up the document you had
-  open.
+- **Resume from sleep.** A real machine switched off and on again picks up the
+  document you had open. VBNote cannot, which is why it has no power switch.
 
 ## For developers
 

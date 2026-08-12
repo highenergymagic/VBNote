@@ -27,6 +27,7 @@ mod home;
 mod hostclock;
 mod hostkey;
 mod keys;
+mod progress;
 mod debug;
 mod window;
 
@@ -439,7 +440,6 @@ fn parse_args() -> Result<Options, String> {
                      The host key is F11, and is never sent to the machine:\n\
                      \x20 host + G             capture the keyboard, or give it back\n\
                      \x20 host + R             reset the machine\n\
-                     \x20 host + P             flip the power switch\n\
                      \x20 host + Q             quit, saving the flash disk\n\
                      Captured, every key goes to the machine and none to Windows.\n\
                      Released, the reverse. It starts released, and says which it is.\n\
@@ -1378,15 +1378,14 @@ fn run(
     let status_path = opts.status.clone();
     let stop_path = status_path.as_ref().map(|p| format!("{p}.stop"));
     // The host key's commands, as files, for a run with nobody at the
-    // keyboard: `touch PATH.reset` and `touch PATH.power`. A detached run has
-    // no keyboard to press the host key on, and these are the only way to
-    // exercise a reset or the power switch from a script.
+    // keyboard: `touch PATH.reset`. A detached run has no keyboard to press
+    // the host key on, and this is the only way to exercise a reset from a
+    // script.
     let poke_paths: Vec<(String, hostkey::Command)> = status_path
         .as_ref()
         .map(|p| {
             vec![
                 (format!("{p}.reset"), hostkey::Command::Reset),
-                (format!("{p}.power"), hostkey::Command::Power),
             ]
         })
         .unwrap_or_default();
@@ -1443,8 +1442,7 @@ fn run(
             std::thread::sleep(std::time::Duration::from_secs(2));
             voice.say(
                 "VBNote ready. Keyboard released. \
-                 F 11 with G to capture it, R to reset, P for the power switch, \
-                 Q to quit.",
+                 F 11 with G to capture it, R to reset, Q to quit.",
             );
         });
     }
@@ -1516,8 +1514,11 @@ fn run(
     // like, so until the machine makes its own first sound this makes one on
     // its behalf. It stops of its own accord: the moment the guest pushes a
     // sample, there is something better to listen to.
-    let beep_every = opts.cpu_hz * 5;
-    let mut next_beep = beep_every;
+    // Checked once a guest second: often enough that a stage is announced
+    // when it happens, rarely enough to cost nothing.
+    let progress_every = opts.cpu_hz;
+    let mut next_progress = progress_every;
+    let mut progress = progress::Progress::new();
 
     // How often the card is written back. Two seconds of the guest's time,
     // which at the clock this runs at is about two seconds of the user's. It
@@ -1541,15 +1542,33 @@ fn run(
             break;
         }
 
-        if spent >= next_beep {
-            next_beep = spent + beep_every;
-            if let Some(a) = audio {
-                if !a.guest_has_spoken() {
-                    // 2 kHz for a twentieth of a second at -20 dB: enough to
-                    // say the machine is still there, quiet and short enough
-                    // not to be in the way while it says it.
-                    a.push_tone(2000.0, 0.05, 0.1);
-                }
+        if spent >= next_progress {
+            next_progress = spent + progress_every;
+            let sight = progress::Sight {
+                // The MMU being on is the kernel running from virtual
+                // addresses, which the bootloader never does.
+                kernel_running: cpu.cp15.control & 1 != 0,
+                // CE puts each process in its own FCSE slot, so a non-zero
+                // process id is something other than the kernel scheduled.
+                programs_running: cpu.cp15.pid >> 25 != 0,
+                // The USB driver powers the root hub as the built-in drivers
+                // are loaded.
+                drivers_loaded: board.soc.ohci.ports.iter().any(|p| p.status & 0x100 != 0),
+                // `reads`, not `scans_seen`: the latter counts scans that
+                // found a key held, and nobody is typing during a boot, so it
+                // stays at zero and the stage never arrives. This one counts
+                // the driver looking at all.
+                keyboard_ready: board.cpld.keyboard.reads > 0,
+                first_run_setup: board.cpld.modem.commands > 0,
+                guest_spoke: audio.as_ref().is_some_and(|a| a.guest_has_spoken()),
+                seconds: spent / opts.cpu_hz,
+            };
+            if let Some(said) = progress.update(&sight) {
+                // Printed as well as spoken: a bug report that says which
+                // stage it stopped at is worth a great deal more than one
+                // that says it went quiet.
+                println!("starting up: {said}");
+                voice.say(&said);
             }
         }
 
@@ -1608,7 +1627,7 @@ fn run(
                     asleep = false;
                     last_pc = u32::MAX;
                     same_pc = 0;
-                    next_beep = spent + beep_every;
+                    next_progress = spent + progress_every;
                     restart(cpu, board, start);
                     board.cpld.keyboard.release_all();
                     held = None;
@@ -1616,43 +1635,6 @@ fn run(
                 hostkey::Command::Quit => {
                     voice.say("quitting, saving the flash disk");
                     early = Some(Outcome::Interrupted);
-                }
-                hostkey::Command::Power => {
-                    let on = !board.power.power_switch_on;
-                    board.power.power_switch_on = on;
-                    board.power.drive(&mut board.soc.gpio, &mut board.soc.intc);
-                    if on && asleep {
-                        // Waking this part is architecturally a reset: it
-                        // drops most of the chip when it sleeps and comes
-                        // back through the boot vector. What tells the
-                        // firmware this is a resume and not a cold start is
-                        // the sleep bit in RCSR, and what makes it worth
-                        // resuming is that memory was never cleared. KeyWord
-                        // picks the document back up from there -- "Resuming
-                        // edit of ...", which is a string that only makes
-                        // sense if none of this was a power cut.
-                        // Not a true resume, and deliberately not claiming
-                        // to be one. Telling the firmware this was a sleep
-                        // reset -- RCSR bit 2 -- makes it take its resume
-                        // path, and that path goes somewhere this emulator
-                        // cannot follow it to: the machine comes back
-                        // running and completely silent. A cold boot is
-                        // second best and it works. See `docs` for what is
-                        // known about the resume contract.
-                        restart(cpu, board, start);
-                        held = None;
-                        asleep = false;
-                        last_pc = u32::MAX;
-                        same_pc = 0;
-                        next_beep = spent + beep_every;
-                        voice.say("power switch on, starting up");
-                    } else {
-                        // Awake, the machine acts on the transition itself:
-                        // the pin is armed for a falling edge and the guest
-                        // suspends when it sees one. Asleep with the switch
-                        // already on, there is nothing to do.
-                        voice.say(if on { "power switch on" } else { "power switch off" });
-                    }
                 }
             }
         }

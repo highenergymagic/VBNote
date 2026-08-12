@@ -25,7 +25,6 @@
 //! | host + G | capture the keyboard, or give it back |
 //! | host + R | reset the machine |
 //! | host + Q | quit, saving the flash disk |
-//! | host + P | flip the power switch |
 //!
 //! These work whether or not the keyboard is captured, because the one that
 //! gives the keyboard back has to work when it is.
@@ -69,7 +68,6 @@ pub enum Command {
     Capture(bool),
     Reset,
     Quit,
-    Power,
 }
 
 /// Windows virtual-key codes for the keys that mean something here.
@@ -105,7 +103,6 @@ pub mod vk {
     pub const G: u32 = 0x47;
     pub const R: u32 = 0x52;
     pub const Q: u32 = 0x51;
-    pub const P: u32 = 0x50;
 }
 
 static CAPTURED: AtomicBool = AtomicBool::new(false);
@@ -191,7 +188,6 @@ pub fn decide(vk: u32, down: bool, captured: bool, host_down: bool, focused: boo
             vk::G => Verdict::Run(Command::Capture(!captured)),
             vk::R => Verdict::Run(Command::Reset),
             vk::Q => Verdict::Run(Command::Quit),
-            vk::P => Verdict::Run(Command::Power),
             // An unassigned host chord does nothing, and is still swallowed:
             // typing a stray letter into whatever is behind the emulator is
             // not a good way to find out a chord does not exist.
@@ -457,7 +453,6 @@ mod tests {
         assert_eq!(decide(vk::G, true, true, true, true), Verdict::Run(Command::Capture(false)));
         assert_eq!(decide(vk::R, true, true, true, true), Verdict::Run(Command::Reset));
         assert_eq!(decide(vk::Q, true, true, true, true), Verdict::Run(Command::Quit));
-        assert_eq!(decide(vk::P, true, true, true, true), Verdict::Run(Command::Power));
     }
 
     /// A host chord must never also reach the machine or the host. `host`+`Q`
@@ -465,7 +460,7 @@ mod tests {
     /// gesture.
     #[test]
     fn a_host_chord_goes_nowhere_else() {
-        for vk in [vk::G, vk::R, vk::Q, vk::P, b'X' as u32] {
+        for vk in [vk::G, vk::R, vk::Q, b'X' as u32] {
             let v = decide(vk, true, true, true, true);
             assert_ne!(v, Verdict::PassThrough, "{vk:#04x} reached the host");
             assert_ne!(v, Verdict::Send(vk), "{vk:#04x} reached the machine");
