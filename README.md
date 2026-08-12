@@ -26,7 +26,7 @@ That is all. Everything else is in the installer.
 
 ## Installing
 
-Download `VBNote-1.0.1-setup.exe` from
+Download `VBNote-1.1.0-setup.exe` from
 [Releases](https://github.com/highenergymagic/VBNote/releases) and run it.
 
 It installs for you alone and does not ask for an administrator. Windows may
@@ -79,26 +79,29 @@ are mapped to keys near where your thumbs already are:
 | --- | --- |
 | **READ** | left Alt |
 | **FUNCTION** | right Alt |
-| **CONTROL** | left control |
+| **CONTROL** | either control key |
 | SHIFT, letters, digits, punctuation, arrows, Backspace, Enter, Escape, Tab | themselves |
 | HELP, REPEAT, MENU | F1, F2, F3 |
 
 So `FUNCTION`+`O` for the options menu, `READ`+`T` for the time, and so on,
 exactly as the manuals describe.
 
-### Right control is VBNote's own key
+### F11 is VBNote's own key
 
-Right control never reaches the machine. Held with a letter, it talks to the
-emulator:
+F11 never reaches the machine. Held with a letter, it talks to the emulator:
+
+> **This was right control before 1.1.0.** It changed because not every
+> keyboard has a right control key, and without a host key you cannot take the
+> keyboard at all. Right control now works as **CONTROL**, like the left one.
 
 | | |
 | --- | --- |
-| **right control + G** | take the keyboard, or give it back |
-| **right control + R** | reset the machine |
-| **right control + P** | the power switch |
-| **right control + Q** | quit, saving your flash disk |
+| **F11 + G** | take the keyboard, or give it back |
+| **F11 + R** | reset the machine |
+| **F11 + P** | the power switch |
+| **F11 + Q** | quit, saving your flash disk |
 
-**Start by pressing right control + G.** Until you do, your keys go to Windows
+**Start by pressing F11 + G.** Until you do, your keys go to Windows
 as usual and the machine hears nothing. While the keyboard is taken, every key
 goes to the machine instead — so you can type freely without Windows shortcuts
 getting in the way. Press it again to get your keyboard back. VBNote says which
@@ -137,7 +140,7 @@ menu first.
 **Speech breaks up or stutters.** Lower `cpu_mhz` in the settings file — try
 52, then 40.
 
-**The machine does not respond to the keyboard.** Press right control + G to
+**The machine does not respond to the keyboard.** Press F11 + G to
 take the keyboard, and check VBNote's own window is in front.
 
 **Setup says your firmware is not the tested build.** VBNote is tested against

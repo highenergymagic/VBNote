@@ -9,7 +9,7 @@
 ; names say what they do rather than what they are.
 
 #define Name "VBNote"
-#define Version "1.0.1"
+#define Version "1.1.0"
 #define Publisher "Fractal Microsystems"
 #define Url "https://github.com/highenergymagic/VBNote"
 #define Copyright "Copyright (C) 2026 Fractal Microsystems. GPL-2.0-only."

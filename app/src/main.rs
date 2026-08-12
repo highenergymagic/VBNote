@@ -436,7 +436,7 @@ fn parse_args() -> Result<Options, String> {
                      Typing at it:\n\
                      \x20 --keyboard           take the keyboard and speak what the host key does\n\
                      \n\
-                     The host key is right control, and is never sent to the machine:\n\
+                     The host key is F11, and is never sent to the machine:\n\
                      \x20 host + G             capture the keyboard, or give it back\n\
                      \x20 host + R             reset the machine\n\
                      \x20 host + P             flip the power switch\n\
@@ -1443,7 +1443,7 @@ fn run(
             std::thread::sleep(std::time::Duration::from_secs(2));
             voice.say(
                 "VBNote ready. Keyboard released. \
-                 Right control with G to capture it, R to reset, P for the power switch, \
+                 F 11 with G to capture it, R to reset, P for the power switch, \
                  Q to quit.",
             );
         });

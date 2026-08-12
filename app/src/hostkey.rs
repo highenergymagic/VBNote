@@ -17,8 +17,8 @@
 //!
 //! # The host key
 //!
-//! Right control, alone, is never sent to the machine. Held with a letter it
-//! commands the emulator:
+//! `F11`, alone, is never sent to the machine. Held with a letter it commands
+//! the emulator:
 //!
 //! | chord | what it does |
 //! | --- | --- |
@@ -81,14 +81,26 @@ pub enum Command {
 pub mod vk {
     pub const LSHIFT: u32 = 0xA0;
     pub const RSHIFT: u32 = 0xA1;
-    /// `CONTROL` on the machine.
+    /// `CONTROL` on the machine. So is `RCONTROL`, the same way both shifts
+    /// are `SHIFT`.
     pub const LCONTROL: u32 = 0xA2;
-    /// The host key. Never reaches the machine.
     pub const RCONTROL: u32 = 0xA3;
     /// `READ` on the machine, the chord key.
     pub const LMENU: u32 = 0xA4;
     /// `FUNCTION` on the machine.
     pub const RMENU: u32 = 0xA5;
+
+    /// The host key. Never reaches the machine.
+    ///
+    /// It was right control until a bug report pointed out the obvious: not
+    /// every keyboard has one. Compact and laptop keyboards routinely drop
+    /// it, and a user who cannot press the host key cannot take the keyboard,
+    /// which means they cannot use the emulator at all. `F11` is on every
+    /// keyboard this runs on and the machine has no use for it -- `HELP`,
+    /// `RPT` and `MENU` are `F1` to `F3`.
+    pub const F11: u32 = 0x7A;
+    /// What the host key is. One name, so it is changed in one place.
+    pub const HOST: u32 = F11;
 
     pub const G: u32 = 0x47;
     pub const R: u32 = 0x52;
@@ -168,7 +180,7 @@ pub fn decide(vk: u32, down: bool, captured: bool, host_down: bool, focused: boo
         return Verdict::PassThrough;
     }
     // The host key itself never goes anywhere.
-    if vk == vk::RCONTROL {
+    if vk == vk::HOST {
         return Verdict::Swallow;
     }
     if host_down {
@@ -208,7 +220,7 @@ pub fn decide(vk: u32, down: bool, captured: bool, host_down: bool, focused: boo
 fn modifier_flag(vk: u32) -> Option<&'static AtomicBool> {
     match vk {
         vk::LSHIFT | vk::RSHIFT => Some(&SHIFT),
-        vk::LCONTROL => Some(&CONTROL),
+        vk::LCONTROL | vk::RCONTROL => Some(&CONTROL),
         vk::LMENU => Some(&READ),
         vk::RMENU => Some(&FUNCTION),
         _ => None,
@@ -318,7 +330,7 @@ mod platform {
         if let Some(flag) = modifier_flag(vk) {
             flag.store(down, Ordering::Relaxed);
         }
-        if vk == vk::RCONTROL {
+        if vk == vk::HOST {
             HOST_DOWN.store(down, Ordering::Relaxed);
         }
 
@@ -416,7 +428,7 @@ mod tests {
     fn unfocused_nothing_is_taken() {
         for captured in [false, true] {
             for host_down in [false, true] {
-                for vk in [b'A' as u32, vk::RCONTROL, vk::G, vk::Q] {
+                for vk in [b'A' as u32, vk::HOST, vk::G, vk::Q] {
                     assert_eq!(
                         decide(vk, true, captured, host_down, false),
                         Verdict::PassThrough,
@@ -432,7 +444,7 @@ mod tests {
     fn the_host_key_is_never_sent_on() {
         for captured in [false, true] {
             for down in [false, true] {
-                assert_eq!(decide(vk::RCONTROL, down, captured, false, true), Verdict::Swallow);
+                assert_eq!(decide(vk::HOST, down, captured, false, true), Verdict::Swallow);
             }
         }
     }
@@ -478,9 +490,12 @@ mod tests {
         assert!(std::ptr::eq(modifier_flag(vk::RMENU).unwrap(), &FUNCTION));
         assert!(std::ptr::eq(modifier_flag(vk::LSHIFT).unwrap(), &SHIFT));
         assert!(std::ptr::eq(modifier_flag(vk::RSHIFT).unwrap(), &SHIFT));
-        // The host key is not a machine modifier, and right control is no
-        // longer `CONTROL`.
-        assert!(modifier_flag(vk::RCONTROL).is_none());
+        // Right control is `CONTROL` too, the same way both shifts are
+        // `SHIFT`. It used to be the host key; now that F11 is, a user who
+        // presses it gets the modifier they meant rather than nothing.
+        assert!(std::ptr::eq(modifier_flag(vk::RCONTROL).unwrap(), &CONTROL));
+        // The host key is not a machine modifier.
+        assert!(modifier_flag(vk::HOST).is_none());
     }
 
     /// A modifier is held, not sent. This is what stopped `READ` and

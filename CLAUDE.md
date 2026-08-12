@@ -277,10 +277,19 @@ codes for these *are* the machine's codes, so nothing needs translating.
 
 | machine key | host key |
 |---|---|
-| `CONTROL` | left control (`0xA2`) |
+| `CONTROL` | either control key (`0xA2`, `0xA3`) |
 | `READ` | left Alt (`0xA4`) |
 | `FUNCTION` | right Alt (`0xA5`) |
-| host key | **right control**, never sent to the machine |
+| host key | **`F11`** (`0x7A`), never sent to the machine |
+
+**The host key was right control and is `F11` as of 1.1.0**, because of a bug
+report saying some keyboards do not have one -- compact and laptop keyboards
+routinely drop it. That is not a small inconvenience here: the host key is how
+the keyboard is captured, so a user who cannot press it cannot use the
+emulator at all. `F11` is on every keyboard this runs on and the machine has
+no use for it, `HELP`/`RPT`/`MENU` being `F1` to `F3`. Right control now means
+`CONTROL`, the same way both shifts already meant `SHIFT`, so pressing it does
+what somebody pressing a control key meant rather than nothing.
 
 `host`+`G` capture or release, `host`+`R` reset (440 Hz triangle, 0.5 s),
 `host`+`P` flip the power switch, `host`+`Q` quit -- after a `MessageBoxW`
