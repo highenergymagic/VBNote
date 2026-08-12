@@ -221,7 +221,7 @@ pub fn format(store: &mut Store, label: &str) -> Result<(), String> {
         ));
     }
 
-    write_mbr(store, total, volume_sectors);
+    write_mbr(store, volume_sectors);
 
     let boot = boot_sector(volume_sectors, spc, reserved, fats, fat_sectors, label);
     let base = PARTITION_START * SECTOR;
@@ -250,7 +250,7 @@ pub fn format(store: &mut Store, label: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn write_mbr(store: &mut Store, total: u64, volume_sectors: u64) {
+fn write_mbr(store: &mut Store, volume_sectors: u64) {
     let mut mbr = vec![0u8; 512];
     let e = 446;
     mbr[e] = 0x00; // not bootable
@@ -269,7 +269,6 @@ fn write_mbr(store: &mut Store, total: u64, volume_sectors: u64) {
     mbr[e + 12..e + 16].copy_from_slice(&(volume_sectors as u32).to_le_bytes());
     mbr[510] = 0x55;
     mbr[511] = 0xAA;
-    let _ = total;
     store.write(0, &mbr);
 }
 

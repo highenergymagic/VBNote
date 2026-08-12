@@ -76,7 +76,8 @@ const UHCHIE: u32 = 0x68;
 const UHCHIT: u32 = 0x6C;
 
 /// `HcInterruptStatus` / `HcInterruptEnable` bits, the ones used here.
-const INT_WRITEBACK_DONE: u32 = 1 << 1;
+/// Also used by the board-side list walker, which is where transfers finish.
+pub const INT_WRITEBACK_DONE: u32 = 1 << 1;
 const INT_START_OF_FRAME: u32 = 1 << 2;
 const INT_ROOT_HUB_CHANGE: u32 = 1 << 6;
 const INT_MASTER_ENABLE: u32 = 1 << 31;
