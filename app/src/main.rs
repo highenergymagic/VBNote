@@ -28,6 +28,7 @@ mod hostclock;
 mod hostkey;
 mod keys;
 mod progress;
+mod usbsync;
 mod debug;
 mod window;
 
@@ -186,6 +187,8 @@ struct Options {
     usb_disk: Option<String>,
     /// Size of a USB flash drive created fresh, in megabytes.
     usb_disk_mb: usize,
+    /// Host folder kept in step with the drive.
+    usb_folder: Option<String>,
     /// Record `r1` every time this address is executed, keeping the last few.
     ///
     /// Aimed at a dispatcher: the sequence of message ids leading up to a
@@ -242,6 +245,7 @@ fn parse_args() -> Result<Options, String> {
         cf_card_mb: 64,
         usb_disk: None,
         usb_disk_mb: 64,
+        usb_folder: None,
         trace_at: None,
     };
     // Whether anything was asked for at all. A bare launch is the Start menu.
@@ -344,6 +348,7 @@ fn parse_args() -> Result<Options, String> {
             "--no-serial-eeprom" => opts.serial_eeprom = None,
             "--cf-card" => opts.cf_card = Some(args.next().ok_or("--cf-card needs a path")?),
             "--usb-disk" => opts.usb_disk = Some(args.next().ok_or("--usb-disk needs a path")?),
+            "--usb-folder" => opts.usb_folder = Some(args.next().ok_or("--usb-folder needs a path")?),
             "--usb-disk-mb" => {
                 let v = args.next().ok_or("--usb-disk-mb needs a size")?;
                 opts.usb_disk_mb = v.parse().map_err(|_| "--usb-disk-mb needs a number")?;
@@ -790,6 +795,28 @@ fn main() {
             println!("  it is a fixed VHD, so Windows can mount it (needs administrator)");
             store
         };
+        // Anything new in the folder goes on the drive before the machine
+        // starts. Never while it runs: CE caches directory sectors, and two
+        // writers on one filesystem corrupt it without either noticing.
+        let store = match gandalf::fatfile::Volume::open(store) {
+            Ok(mut volume) => {
+                let report = usbsync::into_drive(&usb_folder(&opts), &mut volume);
+                if let Some(said) = report.spoken("to the drive") {
+                    println!("usb disk: {said}");
+                }
+                for name in &report.failed {
+                    eprintln!("usb disk: could not copy {name} to the drive");
+                }
+                volume.into_store()
+            }
+            Err(e) => {
+                eprintln!("usb disk: {e}; leaving it alone");
+                gandalf::fat32::open(path).unwrap_or_else(|e| {
+                    eprintln!("{e}");
+                    std::process::exit(1);
+                })
+            }
+        };
         let disk = UsbDisk::new(store);
         board.usb = Some(Box::new(disk));
         let soc = &mut board.soc;
@@ -1074,6 +1101,25 @@ fn main() {
         scan_processes(&mut board, cpu.cp15.pid);
     }
     report(&cpu, &mut board, outcome, opts.report_limit);
+
+    // The drive's own writes land in its file as they happen, so this only
+    // has to read them back out into the folder. Re-opened by path rather
+    // than taken back off the board, which keeps the device behind its trait.
+    if let Some(path) = &opts.usb_disk {
+        let folder = usb_folder(&opts);
+        match gandalf::fat32::open(path).and_then(gandalf::fatfile::Volume::open) {
+            Ok(mut volume) => {
+                let report = usbsync::out_of_drive(&mut volume, &folder);
+                if let Some(said) = report.spoken("from the drive") {
+                    println!("usb disk: {said} They are in {}", folder.display());
+                }
+                for name in &report.failed {
+                    eprintln!("usb disk: could not copy {name} out");
+                }
+            }
+            Err(e) => eprintln!("usb disk: cannot read it back: {e}"),
+        }
+    }
 
     if let (Some(f), Some(card)) = (card_file.as_mut(), board.soc.mmc.card.as_mut()) {
         match f.flush(card) {
@@ -2309,6 +2355,22 @@ last {} values of r1 at the traced address:", dispatched.len());
         }
     }
     early.unwrap_or(Outcome::CycleLimitWithLoop(recent))
+}
+
+/// Where the drive's files live on the host.
+///
+/// Documents rather than beside the machine's own files: this is the folder
+/// a user is meant to open, and it belongs where they keep their things.
+fn usb_folder(opts: &Options) -> std::path::PathBuf {
+    if let Some(p) = &opts.usb_folder {
+        return std::path::PathBuf::from(p);
+    }
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_default();
+    std::path::Path::new(&home)
+        .join("Documents")
+        .join("VBNote USB Drive")
 }
 
 fn report(cpu: &Cpu, board: &mut Gandalf, outcome: Outcome, limit: usize) {
