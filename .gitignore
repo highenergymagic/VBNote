@@ -27,6 +27,14 @@ vbnote.status.stop
 halt-after-*.txt
 keysoft_*_upgrade_instructions*.txt
 
+# What building the installer leaves behind: the frozen wizard, the installer
+# itself, and NVDA's controller client, which `installer\build.ps1` fetches
+# into the checkout rather than keeping a binary in the repository.
+/dist/
+/build/
+/nvdaControllerClient.dll
+/installer/nvda-controllerclient-license.txt
+
 # Disk images: card images, provisioned flash, anything a run leaves behind.
 # These are large and some of them carry firmware.
 *.img

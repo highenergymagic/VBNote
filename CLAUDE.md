@@ -72,6 +72,18 @@ reads `VBNote.ini`, and boots `KeysoftSystemDisk.img` with `FlashDisk.img` and
   same text, and a test pins that the file's comments and the defaults agree.
 - **The card is never removed by the uninstaller.** It is the user's
   documents.
+- **"Successful compile" is not proof a file went in.** 1.0 shipped with no
+  NVDA controller client: the workflow wrote `nvdaControllerClient.dll` and
+  the `.iss` asked for `nvdaControllerClient64.dll` with
+  `skipifsourcedoesntexist`, so Inno left it out and said nothing. Nothing
+  failed, the only symptom was speech in the wrong voice, and the installer
+  was 2 KB *smaller* than the release before it. So: the client is fetched by
+  `installer\build.ps1` rather than by the workflow, so a local build and CI
+  package the same file; its source is **required**, not skippable; its
+  SHA-256 is checked because it is loaded into this process; and the build
+  reads back ISCC's own file list and fails if `vbnote.exe`, the wizard or the
+  client is not in it. **Anything optional in a build is something that can be
+  missing from a release without a word.**
 
 ## Provisioning (`wizard/`)
 

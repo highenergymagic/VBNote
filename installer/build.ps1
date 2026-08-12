@@ -98,10 +98,61 @@ if ($check.ExitCode -ne 0) {
     Write-Error "the frozen wizard did not start (exit $($check.ExitCode))"
 }
 
-# --- 3. the installer ------------------------------------------------------
+# --- 3. NVDA's controller client -------------------------------------------
+# Bundled so VBNote speaks in the user's own screen reader voice instead of
+# talking over it in a different one.
+#
+# Fetched here rather than by the CI workflow so that a local build ships what
+# CI ships. When the two were separate they disagreed about the filename --
+# the workflow wrote nvdaControllerClient.dll, the installer script asked for
+# nvdaControllerClient64.dll -- and 1.0 went out with no client at all.
+#
+# The x64 build, because it is loaded into vbnote.exe, which is 64-bit. The
+# 32-bit one could not be loaded even if it were shipped.
+$nvdaVersion = '2024.4.2'
+$nvdaDll     = 'nvdaControllerClient.dll'
+$nvdaLicence = 'installer\nvda-controllerclient-license.txt'
+$nvdaSha     = '0853530a19746f8748994f234ed33589ac255badee41daf82aba47934b5235fb'
+
+if (-not (Test-Path $nvdaDll) -or -not (Test-Path $nvdaLicence)) {
+    Write-Host "Fetching NVDA's controller client $nvdaVersion..." -ForegroundColor Cyan
+    $url = "https://download.nvaccess.org/releases/$nvdaVersion/nvda_${nvdaVersion}_controllerClient.zip"
+    $zip = Join-Path $env:TEMP "nvda-controllerclient-$nvdaVersion.zip"
+    $out = Join-Path $env:TEMP "nvda-controllerclient-$nvdaVersion"
+    if (-not (Test-Path $zip)) { Invoke-WebRequest -Uri $url -OutFile $zip }
+    if (Test-Path $out) { Remove-Item -Recurse -Force $out }
+    Expand-Archive $zip -DestinationPath $out
+    Copy-Item (Join-Path $out 'x64\nvdaControllerClient.dll') $nvdaDll -Force
+    Copy-Item (Join-Path $out 'license.txt') $nvdaLicence -Force
+}
+
+# Checked every time, not only after a fetch: this file is loaded into the
+# emulator's own process, and a stale or altered copy left lying beside the
+# checkout would otherwise be packaged without a word.
+$got = (Get-FileHash $nvdaDll -Algorithm SHA256).Hash.ToLower()
+if ($got -ne $nvdaSha) {
+    Write-Error ("$nvdaDll is not NVDA's $nvdaVersion controller client.`n" +
+                 "  expected $nvdaSha`n" +
+                 "  found    $got`n" +
+                 "  Delete it and build again to fetch a fresh one.")
+}
+Write-Host "  $nvdaDll $((Get-Item $nvdaDll).Length) bytes, hash as expected"
+
+# --- 4. the installer ------------------------------------------------------
 Write-Host 'Building the installer...' -ForegroundColor Cyan
-& $iscc 'installer\VBNote.iss'
+$log = & $iscc 'installer\VBNote.iss'
+$log | ForEach-Object { Write-Host $_ }
 if ($LASTEXITCODE -ne 0) { Write-Error 'the installer did not build' }
+
+# What went in, checked against what was meant to. Inno reports a successful
+# compile whether or not a given file was included, so "it built" is not the
+# same as "it is in there" -- which is exactly how 1.0 shipped without a
+# screen reader client and nothing anywhere said so.
+foreach ($needed in @('vbnote.exe', 'VBNote Setup.exe', $nvdaDll)) {
+    if (-not ($log -match [regex]::Escape($needed))) {
+        Write-Error "the installer was built without $needed"
+    }
+}
 
 Get-ChildItem 'dist\*setup.exe' | ForEach-Object {
     Write-Host ("`nReady: {0} ({1:N1} MB)" -f $_.FullName, ($_.Length / 1MB)) -ForegroundColor Green

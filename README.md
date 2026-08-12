@@ -26,7 +26,7 @@ That is all. Everything else is in the installer.
 
 ## Installing
 
-Download `VBNote-1.0.0-setup.exe` from
+Download `VBNote-1.0.1-setup.exe` from
 [Releases](https://github.com/highenergymagic/VBNote/releases) and run it.
 
 It installs for you alone and does not ask for an administrator. Windows may

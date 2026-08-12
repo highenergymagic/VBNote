@@ -9,7 +9,7 @@
 ; names say what they do rather than what they are.
 
 #define Name "VBNote"
-#define Version "1.0.0"
+#define Version "1.0.1"
 #define Publisher "Fractal Microsystems"
 #define Url "https://github.com/highenergymagic/VBNote"
 #define Copyright "Copyright (C) 2026 Fractal Microsystems. GPL-2.0-only."
@@ -57,9 +57,16 @@ Source: "..\target\release\{#Exe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\dist\wizard\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\README.md"; DestDir: "{app}"; DestName: "README.txt"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion isreadme
-; NVDA's controller client, if it was put beside the build. Without it VBNote
-; still runs and still speaks, through the system voice instead.
-Source: "..\nvdaControllerClient64.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+; NVDA's controller client, so VBNote speaks in the user's own voice instead of
+; talking over their screen reader in a different one. It is NVDA's work and
+; GPL-2.0 like this project, so its licence ships beside it.
+;
+; Required, deliberately. This was `skipifsourcedoesntexist` and named a file
+; the build does not produce, so it was quietly left out of 1.0 and the only
+; symptom was a voice that sounded wrong. A missing file here is now a failed
+; build. `installer\build.ps1` fetches both if they are not already there.
+Source: "..\nvdaControllerClient.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "nvda-controllerclient-license.txt"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 ; Setup first: it is what a new installation needs, and the machine will not

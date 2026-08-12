@@ -77,22 +77,11 @@ jobs:
       - name: Inno Setup
         run: choco install innosetup --no-progress -y
 
-      # NVDA's controller client, so VBNote speaks in the user's own voice
-      # instead of talking over their screen reader in a different one. It is
-      # NVDA's, GPL-2.0 like this project, and its licence ships beside it.
-      - name: NVDA controller client
-        run: |
-          $version = '2024.4.2'
-          $url = "https://download.nvaccess.org/releases/$version/nvda_${version}_controllerClient.zip"
-          Write-Host "Fetching $url"
-          Invoke-WebRequest -Uri $url -OutFile nvda-controllerclient.zip
-          Expand-Archive nvda-controllerclient.zip -DestinationPath nvda-cc -Force
-          Copy-Item 'nvda-cc\x64\nvdaControllerClient.dll' 'nvdaControllerClient.dll'
-          Copy-Item 'nvda-cc\license.txt' 'installer\nvda-controllerclient-license.txt'
-          if (-not (Test-Path 'nvdaControllerClient.dll')) {
-            throw 'the controller client was not extracted'
-          }
-          Get-Item nvdaControllerClient.dll | Select-Object Name, Length
+      # NVDA's controller client used to be fetched here, and that was the bug
+      # that shipped 1.0 without one: this step wrote nvdaControllerClient.dll
+      # and the installer script asked for nvdaControllerClient64.dll, which
+      # it was told to skip quietly if absent. `installer\build.ps1` fetches
+      # it now, so a local build and this one package the same file.
 
       # The wizard's own moving parts, before anything is packaged around
       # them. The FAT reader is the one worth checking: it decides when a

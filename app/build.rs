@@ -14,8 +14,11 @@ fn main() {
         res.set("FileDescription", "VBNote - VoiceNote QT mPower emulator");
         res.set("LegalCopyright", "Copyright (C) 2026 Fractal Microsystems. GPL-2.0-only.");
         res.set("OriginalFilename", "vbnote.exe");
-        res.set("FileVersion", "1.0.0");
-        res.set("ProductVersion", "1.0.0");
+        // From Cargo.toml rather than written out again here, so a release is
+        // one place to change instead of two that can disagree.
+        let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_default();
+        res.set("FileVersion", &version);
+        res.set("ProductVersion", &version);
         if let Err(e) = res.compile() {
             // Not fatal: the emulator is the same program without it, and a
             // build host with no resource compiler should still get one.

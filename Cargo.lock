@@ -35,7 +35,7 @@ dependencies = [
 
 [[package]]
 name = "arm"
-version = "1.0.0"
+version = "1.0.1"
 
 [[package]]
 name = "autocfg"
@@ -116,7 +116,7 @@ dependencies = [
 
 [[package]]
 name = "ceromfs"
-version = "1.0.0"
+version = "1.0.1"
 
 [[package]]
 name = "cesu8"
@@ -455,7 +455,7 @@ dependencies = [
 
 [[package]]
 name = "gandalf"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "arm",
  "ceromfs",
@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "pxa270"
-version = "1.0.0"
+version = "1.0.1"
 
 [[package]]
 name = "quote"
@@ -1294,7 +1294,7 @@ checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "vbnote"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "arm",
  "ceromfs",
