@@ -131,6 +131,11 @@ pub struct Ohci {
     /// Registers outside the map, kept for the same reason the rest of the
     /// SoC keeps them: an unexpected access should be visible, not silent.
     pub unexpected: BTreeMap<u32, u32>,
+    /// Times the controller asserted its line, and times the guest wrote
+    /// HcInterruptStatus to clear it. A driver that is being woken clears
+    /// what it was woken for; one that is timing out never does.
+    pub raises: u64,
+    pub status_clears: u64,
 }
 
 impl Default for Ohci {
@@ -168,6 +173,8 @@ impl Ohci {
             uhchie: 0,
             uhchit: 0,
             unexpected: BTreeMap::new(),
+            raises: 0,
+            status_clears: 0,
         }
     }
 
@@ -206,6 +213,7 @@ impl Ohci {
     }
 
     fn raise(&mut self, bits: u32, intc: &mut Intc) {
+        self.raises += 1;
         self.interrupt_status |= bits;
         self.update(intc);
     }
@@ -295,6 +303,7 @@ impl Ohci {
             // plain store, and treating them as one leaves an interrupt
             // asserted for ever.
             HC_INTERRUPT_STATUS => {
+                self.status_clears += 1;
                 self.interrupt_status &= !val;
                 self.update(intc);
             }

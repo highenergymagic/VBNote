@@ -560,6 +560,13 @@ fn from_installed_machine(opts: &mut Options) -> Result<(), String> {
     // The window, the keyboard hook and the speech: this is somebody sitting
     // down to use the machine, not a scripted run.
     opts.keyboard = true;
+    // The flash drive, so files can be moved without anybody having to know
+    // a command line exists. Made on first use and kept in step with a folder
+    // in Documents. 256 MB because the size of this decides how long the
+    // machine takes to answer questions about it, not how much can be
+    // carried on it.
+    opts.usb_disk = Some(at("UsbDrive.vhd"));
+    opts.usb_disk_mb = 256;
     opts.status = if settings.debug { Some(at("vbnote.status")) } else { None };
     Ok(())
 }
@@ -2571,7 +2578,10 @@ data aborts (distinct):");
     // is exactly how this started.
     {
         let hc = &board.soc.ohci;
-        print!("\nUSB host: HCCA {:#010x}", hc.hcca);
+        print!(
+            "\nUSB host: HCCA {:#010x}, {} interrupts raised, {} acknowledged",
+            hc.hcca, hc.raises, hc.status_clears
+        );
         for (n, port) in hc.ports.iter().enumerate() {
             print!("   port {n} {:#010x}", port.status);
         }

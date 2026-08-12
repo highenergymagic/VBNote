@@ -117,6 +117,33 @@ it is silent for most of that. VBNote says what it is doing as it goes —
 taking a while it says so rather than going quiet. Once the machine has its own
 voice, VBNote stops talking over it.
 
+### Moving files on and off
+
+The machine has a USB flash drive plugged into it, and that drive is a folder
+on your computer:
+
+**`Documents\VBNote USB Drive`**
+
+Put a file in that folder and it is on the drive next time you start VBNote.
+Anything you put on the drive from the machine is back in that folder when you
+quit. VBNote says what it copied, both ways.
+
+On the machine the drive appears alongside the flash disk, and you copy to and
+from it the same way you would on a real BrailleNote. Your documents still
+live on the flash disk — this is for carrying things between the two machines,
+not for keeping them.
+
+> **Do not ask the machine for information about the drive.** The drive
+> information screen makes it read the whole drive's index before it answers,
+> which takes twenty seconds or so of complete silence and is easily mistaken
+> for a crash. It does finish. Everything else about the drive — listing it,
+> reading, writing, copying — is normal speed.
+
+The drive itself is `.VBNote\UsbDrive.vhd`. It is a real virtual hard disk, so
+Windows can open it directly if you would rather use Explorer: right-click and
+choose **Mount**. That needs an administrator, and **never do it while VBNote
+is running** — two programs writing one disk will corrupt it.
+
 ### There is no power switch
 
 The real machine has one; VBNote does not. Switching it off suspends the
