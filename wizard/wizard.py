@@ -319,6 +319,19 @@ class Wizard(wx.adv.Wizard):
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+
+    # Reaching this point at all means the program found its own modules, so
+    # there is nothing left to check: `provision` and `flashdisk` are imported
+    # above, and a packaging mistake fails before `main` is ever called. That
+    # is precisely how the frozen wizard once shipped broken -- it ran as a
+    # loose script with no parent package and died on its own imports -- so
+    # the build now runs this and looks at the exit code.
+    #
+    # Nothing is printed: a windowed program has no console attached, and
+    # printing into that is its own small crash.
+    if "--selftest" in argv:
+        return 0
+
     home = provision.HOME
     if "--home" in argv:
         home = argv[argv.index("--home") + 1]

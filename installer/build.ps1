@@ -77,12 +77,26 @@ python -m PyInstaller `
     --paths . `
     --hidden-import wizard.flashdisk `
     --hidden-import wizard.provision `
-    'wizard\wizard.py'
+    --hidden-import wizard.wizard `
+    'vbnote_setup.py'
 if ($LASTEXITCODE -ne 0) { Write-Error 'the wizard did not freeze' }
 
 New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
 Move-Item 'dist\pyinstaller\VBNote Setup' 'dist\wizard'
 Remove-Item -Recurse -Force 'dist\pyinstaller'
+
+# Prove the frozen wizard can reach its own modules before wrapping an
+# installer around it. It once shipped unable to: frozen from the wrong
+# script, it ran with no parent package and died on its own imports, and
+# nothing in the build noticed because everything else about it was fine.
+Write-Host 'Checking the frozen wizard starts...' -ForegroundColor Cyan
+$wizardExe = 'dist\wizard\VBNote Setup.exe'
+if (-not (Test-Path $wizardExe)) { Write-Error "$wizardExe was not built" }
+$check = Start-Process -FilePath $wizardExe -ArgumentList '--selftest' `
+    -Wait -PassThru -NoNewWindow
+if ($check.ExitCode -ne 0) {
+    Write-Error "the frozen wizard did not start (exit $($check.ExitCode))"
+}
 
 # --- 3. the installer ------------------------------------------------------
 Write-Host 'Building the installer...' -ForegroundColor Cyan
