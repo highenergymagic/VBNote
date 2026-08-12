@@ -139,7 +139,6 @@ pub fn builtin() -> Result<Vec<Patch>, String> {
     [
         ("sd-folder-is-flash-disk.nkp", include_str!("../../../patches/sd-folder-is-flash-disk.nkp")),
         ("sd-profile-is-flash-disk.nkp", include_str!("../../../patches/sd-profile-is-flash-disk.nkp")),
-        ("no-diskonchip-driver.nkp", include_str!("../../../patches/no-diskonchip-driver.nkp")),
     ]
     .iter()
     .map(|(name, text)| crate::nkp::parse(text, name))
@@ -223,7 +222,7 @@ mod tests {
     #[test]
     fn every_shipped_patch_parses_and_stays_inside_what_it_matched() {
         let patches = builtin().expect("the shipped patches must parse");
-        assert_eq!(patches.len(), 3, "three, all registry records");
+        assert_eq!(patches.len(), 2, "two, both registry records");
         for p in &patches {
             assert!(is_well_formed(p), "{} runs past its signature", p.name);
             assert!(!p.because.is_empty(), "{} does not say why", p.name);
