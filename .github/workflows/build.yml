@@ -55,6 +55,11 @@ jobs:
     name: installer
     runs-on: windows-latest
     needs: test
+    # Enough to attach an installer to a release, and nothing else. The
+    # default token is read-only, so the release step got an HTTP 403 the
+    # first time a version was tagged.
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v7
 
