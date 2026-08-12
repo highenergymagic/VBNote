@@ -84,6 +84,20 @@ class FirmwarePage(wx.adv.WizardPageSimple):
 
     #: The two files, as (label, attribute, dialog title, wildcard).
     #:
+    #: Sizes offered for the drive that carries files to and from the machine,
+    #: with what each is worth in megabytes.
+    #:
+    #: FAT32 cannot honestly be smaller than 64 MB -- below that there are too
+    #: few clusters -- and Windows will not make one larger than 32 GB, so
+    #: neither will this. The middle is where the real choice is.
+    DRIVE_SIZES = (
+        ("64 MB", 64),
+        ("256 MB", 256),
+        ("1 GB", 1024),
+        ("4 GB", 4096),
+        ("16 GB", 16384),
+    )
+
     #: The labels are what a screen reader reads out on landing in each field,
     #: so they say which file is wanted and not merely "file".
     WANTED = (
@@ -132,7 +146,33 @@ class FirmwarePage(wx.adv.WizardPageSimple):
             self.fields[attr] = field
             setattr(self, attr, field)
         box.Add(grid, 0, wx.EXPAND | wx.ALL, 8)
+
+        # How big the removable drive should be. A list of sizes rather than a
+        # number to type: there is no size a person needs that is not in it,
+        # and a typed number can be nonsense in ways a chosen one cannot.
+        #
+        # Read only once, when setup runs, so nothing here has to be told when
+        # it changes.
+        sizes = wx.BoxSizer(wx.HORIZONTAL)
+        caption = wx.StaticText(self, label="Size of the drive for moving files:")
+        self.drive_size = wx.Choice(self, choices=[name for name, _ in self.DRIVE_SIZES])
+        self.drive_size.SetName("Size of the drive for moving files")
+        # The default is the second entry, 256 MB. Bigger holds more and takes
+        # longer to answer "how much space is free", which is a question the
+        # machine asks the drive by reading the whole of its index.
+        self.drive_size.SetSelection(1)
+        sizes.Add(caption, 0, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 8)
+        sizes.Add(self.drive_size, 0)
+        box.Add(sizes, 0, wx.EXPAND | wx.ALL, 8)
+
         self.SetSizer(box)
+
+    def chosen_drive_megabytes(self) -> int:
+        """The size the user picked, in megabytes."""
+        at = self.drive_size.GetSelection()
+        if at < 0:
+            at = 1
+        return self.DRIVE_SIZES[at][1]
 
     def browse(self, field: wx.TextCtrl, title: str, wildcard: str) -> None:
         with wx.FileDialog(
@@ -295,7 +335,13 @@ class Wizard(wx.adv.Wizard):
         if self.worker:
             return
         eboot, kernel = self.firmware.chosen()
-        maker = provision.Provisioner(self.emulator, eboot, kernel, self.home)
+        maker = provision.Provisioner(
+            self.emulator,
+            eboot,
+            kernel,
+            self.home,
+            usb_disk_mb=self.firmware.chosen_drive_megabytes(),
+        )
         self.enable_next(False)
 
         def report(p: provision.Progress) -> None:
