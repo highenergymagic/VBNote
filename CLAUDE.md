@@ -566,12 +566,32 @@ way up**, measured on a normal boot with the registers still unimplemented:
 | `0x4c000010` | HcInterruptEnable | `0x80000000`, master interrupt enable |
 | `0x4c000050` | HcRhStatus | `0x00010000`, root hub power on |
 | `0x4c000048` | HcRhDescriptorA | 11 reads, asking how many ports it has |
-| `0x4c000064` | HcRhPortStatus[1] | 9 reads and 8 writes, polling for a device |
+| `0x4c000064` | `UHCHR` | 9 reads and 8 writes, the reset and power sequence |
+
+**`0x4c000064` is `UHCHR`, not port status.** The PXA270 puts three of its own
+registers above the OHCI block -- `UHCHR` at `0x64`, `UHCHIE` at `0x68`,
+`UHCHIT` at `0x6C` -- and a first reading of this log against the standard
+OHCI map alone called it `HcRhPortStatus[1]` and concluded the driver was
+polling for a device. It was not. `HcRhPortStatus` at `0x54` was **never
+touched at all**, which is the stronger version of the same conclusion: told
+it had no ports, the driver never looked at one.
 
 It also claims its interrupts: `RequestSysIntr` at `wce32ddk.dll` `0x02251070`
 is called with **IRQ 3 and IRQ 2**, both from `ohci.dll`, which is the two USB
 host ports. (The other claims on a boot are IRQ 22 from `bvdmain_serial.dll`
 and IRQ 10, the modem's shared GPIO source.)
+
+**The client controller is live too.** `bvd_udc_ser.dll` at `0x0231_0000`
+touches the PXA270 UDC at `0x4060_0000` on every boot -- that is the Mini-USB
+port, in device mode. Not modelled, and the obvious use for it later is
+carrying USB over IP.
+
+`crates/pxa270/src/ohci.rs` models the controller now. With `HcRhDescriptorA`
+reporting **two** ports, a boot ends with both root hub ports **powered**
+(`0x00000100`) instead of the driver never looking: it found them and turned
+them on. What is still missing is a device to plug in, which needs the
+endpoint and transfer descriptor lists walked so control and bulk transfers
+actually happen.
 
 **It sees nothing because the emulator answers `HcRhDescriptorA` with zero,
 which says the root hub has no ports.** The driver believed it, correctly.

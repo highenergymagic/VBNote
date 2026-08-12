@@ -5,6 +5,11 @@
 pub const BASE: u32 = 0x40D0_0000;
 
 // Interrupt source numbers used by the drivers we care about.
+/// The two USB host interrupts. Measured rather than assumed: `ohci.dll`
+/// calls `RequestSysIntr` twice on a boot, with 3 and then 2, which is the
+/// machine's two USB host ports.
+pub const IRQ_USB_HOST_2: u32 = 2;
+pub const IRQ_USB_HOST_1: u32 = 3;
 pub const IRQ_OST_4_11: u32 = 7;
 pub const IRQ_GPIO0: u32 = 8;
 pub const IRQ_GPIO1: u32 = 9;
@@ -56,6 +61,13 @@ impl Intc {
         } else {
             self.pending[bank] &= !(1 << bit);
         }
+    }
+
+    /// Whether a source is asserted, regardless of whether it is masked.
+    /// For a device to check its own line without reaching into the bank.
+    pub fn is_pending(&self, source: u32) -> bool {
+        let (bank, bit) = ((source / 32) as usize, source % 32);
+        bank < 2 && self.pending[bank] & (1 << bit) != 0
     }
 
     #[inline]

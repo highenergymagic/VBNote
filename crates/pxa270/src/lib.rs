@@ -11,6 +11,7 @@ pub mod i2c;
 pub mod intc;
 pub mod mmc;
 pub mod sdcard;
+pub mod ohci;
 pub mod ost;
 pub mod power;
 pub mod uart;
@@ -55,6 +56,8 @@ pub struct Pxa270 {
     pub pmu: Pmu,
     pub rtc: Rtc,
     pub memc: MemoryController,
+    /// The USB host controller, and the root hub a storage device plugs into.
+    pub ohci: ohci::Ohci,
     pub sram: Vec<u8>,
     /// Accesses to peripherals we have not implemented.
     pub unimplemented: BTreeMap<u32, AccessStat>,
@@ -81,6 +84,7 @@ impl Pxa270 {
             pmu: Pmu::default(),
             rtc: Rtc::new(cpu_hz),
             memc: MemoryController::default(),
+            ohci: ohci::Ohci::new(),
             sram: vec![0; SRAM_SIZE],
             unimplemented: BTreeMap::new(),
             pc: 0,
@@ -131,6 +135,7 @@ impl Pxa270 {
             power::PMU_BASE => self.pmu.read(off),
             power::RTC_BASE => self.rtc.read(off),
             power::MEMC_BASE => self.memc.read(off),
+            ohci::BASE => self.ohci.read(off, &mut self.intc),
             SRAM_BASE => {
                 let o = off as usize & (SRAM_SIZE - 1);
                 u32::from_le_bytes(self.sram[o..o + 4].try_into().unwrap())
@@ -163,6 +168,7 @@ impl Pxa270 {
             power::PMU_BASE => self.pmu.write(off, val),
             power::RTC_BASE => self.rtc.write(off, val, &mut self.intc),
             power::MEMC_BASE => self.memc.write(off, val),
+            ohci::BASE => self.ohci.write(off, val, &mut self.intc),
             SRAM_BASE => {
                 let o = off as usize & (SRAM_SIZE - 1);
                 self.sram[o..o + 4].copy_from_slice(&val.to_le_bytes());

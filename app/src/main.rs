@@ -2456,6 +2456,24 @@ data aborts (distinct):");
         }
     }
 
+    // The USB host controller. The root hub's port status is the interesting
+    // part: a driver that never reads it has been told it has no ports, which
+    // is exactly how this started.
+    {
+        let hc = &board.soc.ohci;
+        print!("\nUSB host: HCCA {:#010x}", hc.hcca);
+        for (n, port) in hc.ports.iter().enumerate() {
+            print!("   port {n} {:#010x}", port.status);
+        }
+        println!();
+        if !hc.unexpected.is_empty() {
+            println!("  registers outside the map:");
+            for (off, val) in hc.unexpected.iter().take(limit) {
+                println!("    {off:#06x}  last {val:#010x}");
+            }
+        }
+    }
+
     // What the PCMCIA socket was asked for. An empty list means card services
     // never looked, which is a different fault from a card it looked at and
     // rejected -- and telling those two apart is most of the work.
