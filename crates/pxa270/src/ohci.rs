@@ -108,19 +108,19 @@ pub struct Port {
 }
 
 pub struct Ohci {
-    control: u32,
-    command_status: u32,
+    pub control: u32,
+    pub command_status: u32,
     interrupt_status: u32,
     interrupt_enable: u32,
     pub hcca: u32,
     period_current_ed: u32,
-    control_head_ed: u32,
+    pub control_head_ed: u32,
     control_current_ed: u32,
-    bulk_head_ed: u32,
+    pub bulk_head_ed: u32,
     bulk_current_ed: u32,
-    done_head: u32,
+    pub done_head: u32,
     fm_interval: u32,
-    fm_number: u32,
+    pub fm_number: u32,
     periodic_start: u32,
     ls_threshold: u32,
     rh_status: u32,
@@ -197,6 +197,12 @@ impl Ohci {
         self.ports
             .get(port)
             .is_some_and(|p| p.status & PORT_CONNECTED != 0)
+    }
+
+    /// Raise an interrupt from the board-side list walker, which is where
+    /// transfers actually happen.
+    pub fn raise_from_board(&mut self, bits: u32, intc: &mut Intc) {
+        self.raise(bits, intc);
     }
 
     fn raise(&mut self, bits: u32, intc: &mut Intc) {

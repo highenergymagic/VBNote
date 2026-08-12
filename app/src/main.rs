@@ -182,6 +182,10 @@ struct Options {
     cf_card: Option<String>,
     /// Size of a CompactFlash card created fresh, in megabytes.
     cf_card_mb: usize,
+    /// Image file backing a USB flash drive on the host port.
+    usb_disk: Option<String>,
+    /// Size of a USB flash drive created fresh, in megabytes.
+    usb_disk_mb: usize,
     /// Record `r1` every time this address is executed, keeping the last few.
     ///
     /// Aimed at a dispatcher: the sequence of message ids leading up to a
@@ -236,6 +240,8 @@ fn parse_args() -> Result<Options, String> {
         sd_card_mb: 128,
         cf_card: None,
         cf_card_mb: 64,
+        usb_disk: None,
+        usb_disk_mb: 64,
         trace_at: None,
     };
     // Whether anything was asked for at all. A bare launch is the Start menu.
@@ -337,6 +343,11 @@ fn parse_args() -> Result<Options, String> {
             }
             "--no-serial-eeprom" => opts.serial_eeprom = None,
             "--cf-card" => opts.cf_card = Some(args.next().ok_or("--cf-card needs a path")?),
+            "--usb-disk" => opts.usb_disk = Some(args.next().ok_or("--usb-disk needs a path")?),
+            "--usb-disk-mb" => {
+                let v = args.next().ok_or("--usb-disk-mb needs a size")?;
+                opts.usb_disk_mb = v.parse().map_err(|_| "--usb-disk-mb needs a number")?;
+            }
             "--cf-card-mb" => {
                 let v = args.next().ok_or("--cf-card-mb needs a size")?;
                 opts.cf_card_mb = v.parse().map_err(|_| "--cf-card-mb needs a number")?;
@@ -733,6 +744,26 @@ fn main() {
             }
         };
         board.pcmcia.insert(card);
+    }
+
+    // A flash drive on the USB host port. Plugged in before the guest runs,
+    // so the driver finds it during its own enumeration rather than having to
+    // be told about it later.
+    if let Some(path) = &opts.usb_disk {
+        use gandalf::usbdisk::UsbDisk;
+        let disk = match std::fs::read(path) {
+            Ok(raw) => {
+                println!("usb disk: {} MB, from {path}", raw.len() / (1024 * 1024));
+                UsbDisk::new(raw)
+            }
+            Err(_) => {
+                println!("usb disk: {} MB, blank", opts.usb_disk_mb);
+                UsbDisk::blank(opts.usb_disk_mb)
+            }
+        };
+        board.usb = Some(Box::new(disk));
+        let soc = &mut board.soc;
+        soc.ohci.set_connected(0, true, &mut soc.intc);
     }
 
     // The serial number lives in a 1-Wire EEPROM on GPIO 22, and KeySoft will
@@ -2448,6 +2479,20 @@ data aborts (distinct):");
             print!("   port {n} {:#010x}", port.status);
         }
         println!();
+        if let Some(dev) = board.usb.as_ref() {
+            // A non-zero address is the proof that matters: the host only
+            // assigns one after a successful control transfer, so it cannot
+            // be there unless descriptors were read and answered.
+            println!(
+                "  device attached, address {} ({})",
+                dev.address(),
+                if dev.address() == 0 {
+                    "not enumerated"
+                } else {
+                    "enumerated"
+                }
+            );
+        }
         if !hc.unexpected.is_empty() {
             println!("  registers outside the map:");
             for (off, val) in hc.unexpected.iter().take(limit) {

@@ -26,6 +26,8 @@ pub mod power;
 pub mod provision;
 pub mod registry;
 pub mod sha256;
+pub mod usb;
+pub mod usbdisk;
 
 use arm::Bus;
 use cpld::Cpld;
@@ -94,6 +96,18 @@ pub struct Gandalf {
     pub onewire: onewire::OneWire,
     /// The PCMCIA/CompactFlash socket, and whatever is in it.
     pub pcmcia: pcmcia::Socket,
+    /// Whatever is plugged into the USB host port.
+    pub usb: Option<Box<dyn usb::Device>>,
+    /// The setup packet of the control transfer in progress.
+    ///
+    /// A control transfer is three separate descriptors and only the first
+    /// says what the other two mean, so it has to outlive its own stage.
+    pub usb_setup: Option<[u8; 8]>,
+    /// What the device answered, waiting to be handed over a packet at a time.
+    pub usb_reply: Option<Vec<u8>>,
+    /// Data the host is sending in a control transfer, gathered until the
+    /// status stage delivers it.
+    pub usb_data_out: Vec<u8>,
     /// Emulated cycles since start.
     pub elapsed: u64,
     /// Accesses that hit nothing at all.
@@ -118,6 +132,10 @@ impl Gandalf {
             power_divider: 0,
             onewire: onewire::OneWire::default(),
             pcmcia: pcmcia::Socket::new(),
+            usb: None,
+            usb_setup: None,
+            usb_reply: None,
+            usb_data_out: Vec::new(),
             elapsed: 0,
             unmapped: BTreeMap::new(),
             pc: 0,
@@ -476,6 +494,13 @@ impl Bus for Gandalf {
             }
             budget -= 1;
         }
+        // The USB controller's lists, on the same footing as DMA: a transfer
+        // moves data between SDRAM and a device, so only the board can run
+        // one. Once per batch rather than once per cycle -- a frame is a
+        // millisecond, which is tens of thousands of cycles, so there is no
+        // call to look more often than this.
+        crate::usb::service(self);
+
         // The charge line is sampled repeatedly to detect toggling, so it has
         // to be refreshed rather than set once.
         self.power_divider = self.power_divider.wrapping_add(cycles);
