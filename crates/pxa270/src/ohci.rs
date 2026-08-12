@@ -136,6 +136,8 @@ pub struct Ohci {
     /// HcInterruptStatus to clear it. A driver that is being woken clears
     /// what it was woken for; one that is timing out never does.
     pub raises: u64,
+    /// Raises the guest could not have felt, because the source was masked.
+    pub raises_masked: u64,
     pub status_clears: u64,
 }
 
@@ -175,6 +177,7 @@ impl Ohci {
             uhchit: 0,
             unexpected: BTreeMap::new(),
             raises: 0,
+            raises_masked: 0,
             status_clears: 0,
         }
     }
@@ -215,6 +218,9 @@ impl Ohci {
 
     fn raise(&mut self, bits: u32, intc: &mut Intc) {
         self.raises += 1;
+        if intc.is_masked(intc::IRQ_USB_HOST_1) {
+            self.raises_masked += 1;
+        }
         self.interrupt_status |= bits;
         self.update(intc);
     }

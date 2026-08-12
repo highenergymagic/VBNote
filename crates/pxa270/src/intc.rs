@@ -63,6 +63,16 @@ impl Intc {
         }
     }
 
+    /// Whether the guest has this source masked off.
+    ///
+    /// A device that raises a masked line has not interrupted anybody: the
+    /// driver will find out some other way, on some other schedule, and the
+    /// difference between the two is latency nobody accounts for.
+    pub fn is_masked(&self, source: u32) -> bool {
+        let (bank, bit) = ((source / 32) as usize, source % 32);
+        bank < 2 && self.mask[bank] & (1 << bit) == 0
+    }
+
     /// Whether a source is asserted, regardless of whether it is masked.
     /// For a device to check its own line without reaching into the bank.
     pub fn is_pending(&self, source: u32) -> bool {

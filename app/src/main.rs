@@ -2615,8 +2615,8 @@ data aborts (distinct):");
     {
         let hc = &board.soc.ohci;
         print!(
-            "\nUSB host: HCCA {:#010x}, {} interrupts raised, {} acknowledged",
-            hc.hcca, hc.raises, hc.status_clears
+            "\nUSB host: HCCA {:#010x}, {} interrupts raised ({} while masked), {} acknowledged",
+            hc.hcca, hc.raises, hc.raises_masked, hc.status_clears
         );
         for (n, port) in hc.ports.iter().enumerate() {
             print!("   port {n} {:#010x}", port.status);
