@@ -66,9 +66,10 @@ key_hold_ms = 800
 # Turn the sound off entirely. yes or no.
 mute = no
 
-# Write a status file and a log of what the machine did, in this directory.
-# Useful when reporting a problem, off otherwise. yes or no.
-diagnostics = no
+# Show a terminal window with a running commentary, and write a status file
+# beside this one. Useful when reporting a problem; off otherwise, because a
+# terminal nobody asked for is one more window to get lost in. yes or no.
+debug = no
 ";
 
 /// Where an installed machine lives.
@@ -94,7 +95,7 @@ pub struct Settings {
     pub cpu_mhz: u64,
     pub key_hold_ms: u64,
     pub mute: bool,
-    pub diagnostics: bool,
+    pub debug: bool,
     /// Lines that were not understood, for telling the user about.
     pub complaints: Vec<String>,
 }
@@ -105,7 +106,7 @@ impl Default for Settings {
             cpu_mhz: 63,
             key_hold_ms: 800,
             mute: false,
-            diagnostics: false,
+            debug: false,
             complaints: Vec::new(),
         }
     }
@@ -155,7 +156,7 @@ impl Settings {
                 "cpu_mhz" => number(value, &mut settings.cpu_mhz, key, &mut complaints),
                 "key_hold_ms" => number(value, &mut settings.key_hold_ms, key, &mut complaints),
                 "mute" => yes_no(value, &mut settings.mute, key, &mut complaints),
-                "diagnostics" => yes_no(value, &mut settings.diagnostics, key, &mut complaints),
+                "debug" => yes_no(value, &mut settings.debug, key, &mut complaints),
                 _ => complaints.push(format!("{key} is not a setting VBNote knows")),
             }
         }
@@ -239,7 +240,7 @@ mod tests {
         assert_eq!(from_file.cpu_mhz, plain.cpu_mhz);
         assert_eq!(from_file.key_hold_ms, plain.key_hold_ms);
         assert_eq!(from_file.mute, plain.mute);
-        assert_eq!(from_file.diagnostics, plain.diagnostics);
+        assert_eq!(from_file.debug, plain.debug);
         assert!(from_file.complaints.is_empty(), "{:?}", from_file.complaints);
     }
 

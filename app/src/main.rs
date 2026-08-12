@@ -1,8 +1,18 @@
-//! VBNote bring-up runner.
+//! VBNote: the emulator itself.
 //!
-//! Not the shipping application yet. This boots a Windows CE image on the
-//! emulated board and reports what happened, which is how the hardware models
-//! get built out.
+//! Two programs in one binary. Started from the Start menu with no arguments
+//! it is an appliance -- a window, a keyboard and a voice, and no terminal
+//! anywhere. Started from a command line it is the tool the hardware models
+//! were built with, and prints everything it knows.
+//!
+//! It is a windowed program that takes a console back when there should be
+//! one; see `console`.
+
+// Windowed, so that starting it from a menu does not put a black terminal
+// beside the machine. A console is attached or made at run time when there is
+// a reason for one, which is a thing that can be decided; the subsystem is
+// not.
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 /// Where a keystroke got to, so a key that does nothing says which of the
 /// steps lost it rather than leaving all of them suspect.
@@ -10,6 +20,7 @@ static KEYS_IN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new
 static KEYS_PRESSED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 mod announce;
+mod console;
 mod audio;
 mod cardfile;
 mod home;
@@ -449,6 +460,12 @@ fn parse_args() -> Result<Options, String> {
                      \x20 vbnote EBOOT.bin --flash --nk NK.bin --sd-card card.img \\\n\
                      \x20          --serial-eeprom SerialNumber.bin --keyboard"
                 );
+                // Flush before leaving. Standard output is buffered when it
+                // is not a terminal -- a pipe, a file, a capture -- and
+                // `exit` does not flush it, so the help would simply vanish
+                // into the buffer. As a console program this went unnoticed,
+                // because a console is line buffered.
+                let _ = std::io::Write::flush(&mut std::io::stdout());
                 std::process::exit(0);
             }
             other if opts.image.is_empty() => opts.image = other.to_string(),
@@ -510,8 +527,34 @@ fn from_installed_machine(opts: &mut Options) -> Result<(), String> {
     // The window, the keyboard hook and the speech: this is somebody sitting
     // down to use the machine, not a scripted run.
     opts.keyboard = true;
-    opts.status = if settings.diagnostics { Some(at("vbnote.status")) } else { None };
+    opts.status = if settings.debug { Some(at("vbnote.status")) } else { None };
     Ok(())
+}
+
+/// Say whether a firmware file is the build VBNote was tested against.
+///
+/// Never a refusal. Somebody with their own machine and their own firmware is
+/// exactly who this software is for, and there is no way for this project to
+/// obtain other builds to test with, so "not the one we know" is all that can
+/// honestly be said. But when a machine misbehaves the first question is
+/// always which firmware it was built from, and this puts the answer in the
+/// log without anyone having to think of asking.
+fn firmware_note(what: &str, path: Option<&str>, want: &str) {
+    let Some(path) = path.filter(|p| !p.is_empty()) else {
+        return;
+    };
+    let Ok(bytes) = std::fs::read(path) else {
+        return;
+    };
+    let got = gandalf::sha256::hex(&bytes);
+    if got == want {
+        println!("  {what} is the build VBNote is tested against");
+    } else {
+        println!("  {what} is NOT the build VBNote is tested against");
+        println!("    this file  {got}");
+        println!("    tested     {want}");
+        println!("    It may work perfectly. Nobody has tried it.");
+    }
 }
 
 /// The patches to apply to this image.
@@ -561,6 +604,9 @@ fn default_serial_eeprom() -> Vec<u8> {
 }
 
 fn main() {
+    // Before anything is printed: if a terminal started this, print there.
+    console::attach_to_parent();
+
     let mut opts = match parse_args() {
         Ok(o) => o,
         Err(e) => {
@@ -576,6 +622,11 @@ fn main() {
         if let Err(trouble) = from_installed_machine(&mut opts) {
             home::complain("VBNote", &trouble);
             std::process::exit(1);
+        }
+        // `debug = yes` wants somewhere to print. Started from a menu there is
+        // nowhere, so make one.
+        if opts.status.is_some() {
+            console::open_new();
         }
     }
     let opts = opts;
@@ -735,6 +786,11 @@ fn main() {
         };
 
         println!("\nprovisioning flash...");
+        {
+            use gandalf::provision::tested;
+            firmware_note("EBOOT.bin", Some(&opts.image), tested::EBOOT_SHA256);
+            firmware_note("NK.bin", opts.kernel.as_deref(), tested::KERNEL_SHA256);
+        }
         let built = match provision::build_flash_image(
             gandalf::FLASH_SIZE,
             image,

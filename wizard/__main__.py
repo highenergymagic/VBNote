@@ -11,7 +11,7 @@ import argparse
 import os
 import sys
 
-from . import flashdisk, provision
+from . import firmware, flashdisk, provision
 from .provision import default_emulator
 
 
@@ -23,7 +23,16 @@ def main(argv=None) -> int:
     p.add_argument("--emulator", default=None, help="the vbnote binary")
     p.add_argument("--force", action="store_true",
                    help="provision even if this home already has a machine")
+    p.add_argument("--i-understand", action="store_true",
+                   help="go on even if the firmware is not the tested build")
     args = p.parse_args(argv)
+
+    unknown = firmware.unknown_files(args.eboot, args.nk)
+    if unknown and not args.i_understand:
+        print(firmware.describe(unknown), file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Pass --i-understand to go on anyway.", file=sys.stderr)
+        return 2
 
     maker = provision.Provisioner(
         args.emulator or default_emulator(), args.eboot, args.nk, args.home)

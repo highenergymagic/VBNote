@@ -49,6 +49,17 @@ it is a supported path rather than an error: it finds `%USERPROFILE%\.VBNote`,
 reads `VBNote.ini`, and boots `KeysoftSystemDisk.img` with `FlashDisk.img` and
 `onewire.img`, with the window, the keyboard hook and speech all on.
 
+- **It is a windowed program that borrows a console.** Built
+  `windows_subsystem = "windows"` so the Start menu does not put a terminal
+  beside the machine, then `AttachConsole(ATTACH_PARENT_PROCESS)` at the top of
+  `main` so a command line still gets output, and `AllocConsole` when
+  `debug = yes`. Only *missing* standard handles are filled in: replacing them
+  unconditionally undoes redirection, and `vbnote --help > file` wrote to a
+  console nobody could see.
+- **Firmware is recognised, never refused.** `provision::tested` has the
+  SHA-256 of the KeySoft 8.0 pair, `gandalf::sha256` is fifty lines and checked
+  against the published vectors, and a mismatch prints what it got and what was
+  expected. The wizard asks the same question in a dialog with a way past it.
 - **No machine there means a dialog, not a message.** There is no console when
   a windowed program is started from a menu, so `eprintln!` reaches nobody. It
   says so in a `MessageBoxW`, which a screen reader reads, and stops.

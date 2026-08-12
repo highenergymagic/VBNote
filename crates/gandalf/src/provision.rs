@@ -261,3 +261,17 @@ mod tests {
         assert_eq!(ImageHeader::from_bytes(&h.to_bytes()), Some(h));
     }
 }
+
+/// The firmware build VBNote is developed and tested against: KeySoft 8.0.
+///
+/// Checked so that a machine built from something else is *known* to have been
+/// built from something else. It is never a refusal -- somebody with their own
+/// machine and their own firmware is who this is for -- but if the emulator
+/// behaves oddly afterwards, the first question is always which build it was
+/// given, and this answers it without anybody having to ask.
+pub mod tested {
+    pub const EBOOT_SHA256: &str =
+        "6d76224e533e0e23ad3d00f7f7b1adb507c9e85660b92b01153280c45e36f08b";
+    pub const KERNEL_SHA256: &str =
+        "2eee7ba72800ec36049ed0722e33ae6c21fca67c342af2115ab9429fc593bfc4";
+}

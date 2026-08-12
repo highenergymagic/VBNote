@@ -92,9 +92,10 @@ key_hold_ms = 800
 # Turn the sound off entirely. yes or no.
 mute = no
 
-# Write a status file and a log of what the machine did, in this directory.
-# Useful when reporting a problem, off otherwise. yes or no.
-diagnostics = no
+# Show a terminal window with a running commentary, and write a status file
+# beside this one. Useful when reporting a problem; off otherwise, because a
+# terminal nobody asked for is one more window to get lost in. yes or no.
+debug = no
 """
 
 #: Where a provisioned machine lives.

@@ -14,6 +14,8 @@ fn main() {
         res.set("FileDescription", "VBNote - VoiceNote QT mPower emulator");
         res.set("LegalCopyright", "Copyright (C) 2026 Fractal Microsystems. GPL-2.0-only.");
         res.set("OriginalFilename", "vbnote.exe");
+        res.set("FileVersion", "1.0.0");
+        res.set("ProductVersion", "1.0.0");
         if let Err(e) = res.compile() {
             // Not fatal: the emulator is the same program without it, and a
             // build host with no resource compiler should still get one.

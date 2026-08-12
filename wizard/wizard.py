@@ -18,7 +18,7 @@ import threading
 import wx
 import wx.adv
 
-from . import provision
+from . import firmware, provision
 from .provision import default_emulator
 
 TITLE = "VBNote Setup"
@@ -257,6 +257,8 @@ class Wizard(wx.adv.Wizard):
             # Say which one, rather than that something is wrong.
             self.refuse(self.firmware.missing())
             event.Veto()
+        elif page is self.firmware and not self.accept_firmware():
+            event.Veto()
         elif page is self.provisioning and not self.provisioning.done:
             # Nothing to say: the button is disabled while it works, and this
             # is only reached if something got past that.
@@ -268,6 +270,25 @@ class Wizard(wx.adv.Wizard):
 
     def refuse(self, why: str) -> None:
         wx.MessageBox(why, TITLE, wx.OK | wx.ICON_INFORMATION, self)
+
+    def accept_firmware(self) -> bool:
+        """Ask about firmware that is not the build this was tested against.
+
+        A question rather than a refusal. Somebody with their own machine and
+        their own firmware is exactly who this is for, and the honest thing is
+        to say what is known and let them decide.
+        """
+        eboot, kernel = self.firmware.chosen()
+        unknown = firmware.unknown_files(eboot, kernel)
+        if not unknown:
+            return True
+        answer = wx.MessageBox(
+            firmware.describe(unknown),
+            f"{TITLE}: unrecognised firmware",
+            wx.YES_NO | wx.ICON_WARNING | wx.NO_DEFAULT,
+            self,
+        )
+        return answer == wx.YES
 
     # -- the work -------------------------------------------------------
     def start_provisioning(self) -> None:

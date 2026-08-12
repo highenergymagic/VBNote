@@ -24,6 +24,7 @@ pub mod patch;
 pub mod power;
 pub mod provision;
 pub mod registry;
+pub mod sha256;
 
 use arm::Bus;
 use cpld::Cpld;
