@@ -144,12 +144,19 @@ impl Intc {
     /// Windows CE's OAL reads this rather than scanning ICIP, so without it
     /// every interrupt resolves to source 0 and the kernel logs
     /// `In ISRUnknown IRQ:0` forever.
+    /// With nothing pending the source fields read `0x3f`, not zero: `0x3f`
+    /// is the "no such source" sentinel, and zero is the OS timer's
+    /// neighbour. A reader that trusts the field without checking the valid
+    /// bit gets told "source 63", which is nothing, rather than "source 0",
+    /// which is a real interrupt.
     pub fn ichp(&self) -> u32 {
-        let mut v = 0;
+        let mut v = ICHP_IDLE;
         if let Some(irq) = self.highest_priority(false) {
+            v &= 0x0000_FFFF;
             v |= ICHP_VAL_IRQ | (irq << 16);
         }
         if let Some(fiq) = self.highest_priority(true) {
+            v &= 0xFFFF_0000;
             v |= ICHP_VAL_FIQ | fiq;
         }
         v
@@ -210,6 +217,9 @@ impl Intc {
 pub const ICHP_VAL_IRQ: u32 = 1 << 31;
 /// ICHP bit 15: an FIQ is pending, and bits 14:0 name it.
 pub const ICHP_VAL_FIQ: u32 = 1 << 15;
+/// Both source fields set to the invalid id, which is what the register
+/// reads when nothing is pending.
+pub const ICHP_IDLE: u32 = 0x003F_003F;
 /// IPR entry bit 31 marks the entry as programmed.
 pub const IPR_VALID: u32 = 1 << 31;
 
@@ -220,7 +230,7 @@ mod tests {
     #[test]
     fn ichp_reports_nothing_when_idle() {
         let intc = Intc::default();
-        assert_eq!(intc.ichp(), 0);
+        assert_eq!(intc.ichp(), ICHP_IDLE, "both source ids invalid");
     }
 
     #[test]
@@ -237,7 +247,7 @@ mod tests {
     fn a_masked_source_is_not_reported() {
         let mut intc = Intc::default();
         intc.set(IRQ_OST0, true);
-        assert_eq!(intc.ichp(), 0, "masked sources stay invisible");
+        assert_eq!(intc.ichp(), ICHP_IDLE, "masked sources stay invisible");
     }
 
     #[test]

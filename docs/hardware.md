@@ -1002,8 +1002,22 @@ emulation; the step numbers below are what actually executes.
 ### Delay loops
 
 EBOOT busy-waits by polling `OSCR` through CE's uncached static alias
-`0xA4F00010` (PA `0x40A00010`). The OS timer rate therefore has to be right:
-3.6864 MHz, or every firmware delay is wrong.
+`0xA4F00010` (PA `0x40A00010`). The OS timer rate therefore has to be right
+or every firmware delay is wrong, and it is **3.25 MHz** -- 308 ns a tick,
+the 13 MHz oscillator divided by four.
+
+This said 3.6864 MHz for a year, which is the **PXA25x**'s rate; the PXA27x
+is the slower one. The prediction above was exactly right and the number
+beside it was not: at 3.6864 MHz every delay in every driver came back
+**13.4% short** and the system tick fired early, so the guest gained time.
+
+Three sources agree. The PXA27x developer's manual gives the 308 ns period.
+QEMU carries two timer classes, `pxa25x-timer` defaulting to 3,686,400 and
+`pxa27x-timer` to 3,250,000. And this machine's own `sdmmc.dll` settles it:
+`StallExecution` at `0x03dc49b8` multiplies its argument by **3250** before
+spinning on OSCR at `0x03dc496c`, which is a millisecond only at 3.25 MHz.
+
+Correcting it took the same boot from **168 audio underruns to 90**.
 
 ## Module inventory highlights
 

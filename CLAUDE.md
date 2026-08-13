@@ -727,6 +727,59 @@ reads and the highest block, and the bring-up report prints them. A retry
 loop and a long job look identical in a total and nothing alike in that
 breakdown.
 
+## The OS timer runs at 3.25 MHz, and QEMU is worth reading
+
+`OST_HZ` was **3.6864 MHz for a year, and that is the PXA25x's rate**. The
+PXA27x divides its 13 MHz oscillator by four: **3.25 MHz, 308 ns a tick**.
+The old value ran every timed thing in the guest **13.4% fast** -- the system
+tick fired early so `GetTickCount` gained time, and every `StallExecution` in
+every driver came back short.
+
+Three sources agree, and the third is the machine itself:
+
+- the PXA27x developer's manual gives the 308 ns period;
+- QEMU's `pxa27x-timer` defaults to 3,250,000 where `pxa25x-timer` defaults
+  to 3,686,400 -- two device classes, one constant apart;
+- **`sdmmc.dll`'s `StallExecution` at `0x03dc49b8` multiplies by 3250**,
+  which is a millisecond only at 3.25 MHz. That constant had already been
+  measured and written down here without anybody noticing what it implied.
+
+Measured over the same boot, same card, same 9.1 seconds of speech:
+**168 audio underruns before, 90 after**. It still reaches the Main menu.
+`the_rate_is_the_pxa27x_one` pins it.
+
+**QEMU is a legitimate reference and this project can use it**: GPL-2.0-only,
+so drawing on GPL-2.0 source is fine. What it is good for is *constants and
+register semantics*, not code -- the architecture is nothing like this one.
+Two things came out of one afternoon with it:
+
+- the timer rate above;
+- **`ICHP` reads `0x003f003f` when nothing is pending**, not zero. `0x3f` is
+  the "no such source" id. Zero is a real source, and the OAL's behaviour
+  when it mis-reads this register is already recorded below as
+  `In ISRUnknown IRQ:0`, so the sentinel is not cosmetic.
+
+Modern QEMU has **deleted** the PXA2xx boards; `v9.0.0` is the last tag with
+`hw/arm/pxa2xx.c`, `hw/arm/pxa2xx_pic.c`, `hw/pcmcia/pxa2xx.c` and
+`hw/sd/pxa2xx_mmci.c` in it. Clone that tag, not `master`.
+
+It also settles a CompactFlash question by showing there is no answer to
+find: **QEMU's PXA PCMCIA socket has no card-detect register at all.**
+Insertion calls a board-supplied `cd_irq`, and `mainstone.c`, `spitz.c` and
+`tosa.c` each wire it to a different GPIO. Card detect is a board secret on
+every PXA machine, not something the SoC provides -- so there is nothing to
+copy for Gandalf, and the socket window layout (io at +0, attribute at
++0x08000000, common at +0x0c000000, per 256 MB socket) already matches what
+`crates/gandalf/src/pcmcia.rs` does.
+
+What was checked against QEMU and found **already right**: the socket
+windows, the priority-table semantics for `ICHP` (a source missing from a
+programmed table is not reported), and the OHCI list service -- ours runs the
+lists on every board tick and hands the done queue over at once, where QEMU
+services them at frame boundaries and defers writeback by the TD's
+`DelayInterrupt`. We are ahead of the specification there, not behind, so it
+is not what the USB gap is made of.
+
 ## The clock
 
 `RCNR` counts seconds from **midnight on 1 January 2010**, not from 1970: left
@@ -820,9 +873,9 @@ clock questions out loud at every boot, to somebody who cannot see the screen.
    iterations a call, or about **7.8 seconds of guest time**.
 
    **There is nothing to reclaim by making it spin less.** OSCR runs at
-   3.6864 MHz whatever the core does, so at `--cpu-mhz 63` one tick costs
-   **17 interpreted instructions**, where a real PXA270 at 312 MHz burns
-   **85**. The emulator already spins five times *fewer* times than the
+   3.25 MHz whatever the core does, so at `--cpu-mhz 63` one tick costs
+   **19 interpreted instructions**, where a real PXA270 at 312 MHz burns
+   **96**. The emulator already spins five times *fewer* times than the
    hardware does, and lowering `--cpu-mhz` lowers it further. The delay is
    the firmware spending its own time, and it costs the same wall clock on
    both machines.

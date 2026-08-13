@@ -1,6 +1,6 @@
 //! PXA27x OS timers, at physical 0x40A00000.
 //!
-//! OSCR counts at 3.6864 MHz. Windows CE's OAL uses match register 0 for the
+//! OSCR counts at 3.25 MHz. Windows CE's OAL uses match register 0 for the
 //! system tick and reads OSCR for its high-resolution counter, so this is the
 //! one peripheral whose rate has to be right or the guest's sense of time
 //! drifts.
@@ -8,7 +8,19 @@
 use crate::intc::{Intc, IRQ_OST0};
 
 pub const BASE: u32 = 0x40A0_0000;
-pub const OST_HZ: u64 = 3_686_400;
+/// 3.25 MHz, which is the PXA27x rate and **not** the PXA25x's 3.6864 MHz.
+///
+/// This was 3.6864 MHz, and that is the older part: the PXA25x runs its OS
+/// timer at 3.6864 MHz, the PXA27x at 3.25 MHz -- 308 ns a tick, from the
+/// 13 MHz oscillator divided by four. Three sources agree and one of them is
+/// this machine's own firmware: `sdmmc.dll`'s `StallExecution` at
+/// `0x03dc49b8` multiplies its argument by **3250** before spinning on OSCR,
+/// which is only a millisecond at 3.25 MHz.
+///
+/// Getting it wrong ran every timed thing in the guest 13.4% fast: the
+/// system tick fired early, so `GetTickCount` gained time, and every
+/// `StallExecution` in every driver came back short.
+pub const OST_HZ: u64 = 3_250_000;
 
 pub struct Ost {
     pub osmr: [u32; 4],
@@ -106,7 +118,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn counter_advances_at_3_6864_mhz() {
+    fn counter_advances_at_the_timer_rate() {
         let cpu_hz = 520_000_000u64;
         let mut ost = Ost::new(cpu_hz);
         let mut intc = Intc::default();
@@ -121,7 +133,9 @@ mod tests {
 
     #[test]
     fn match_raises_and_clears_its_interrupt() {
-        let mut ost = Ost::new(3_686_400); // 1 OSCR tick per cycle
+        // A CPU clock equal to the timer's gives one OSCR tick per cycle,
+        // whatever the timer's rate is.
+        let mut ost = Ost::new(OST_HZ);
         let mut intc = Intc::default();
         ost.write(0x00, 100, &mut intc); // OSMR0
         ost.write(0x1C, 1, &mut intc); // OIER channel 0
@@ -134,6 +148,19 @@ mod tests {
 
         ost.write(0x14, 1, &mut intc); // clear OSSR bit 0
         assert!(!intc.irq_line());
+    }
+
+    /// The rate is the PXA27x's, not the PXA25x's, and this pins it.
+    ///
+    /// Three sources agree: the PXA27x manual gives a 308 ns period, QEMU's
+    /// `pxa27x-timer` defaults to 3,250,000 where its `pxa25x-timer` defaults
+    /// to 3,686,400, and this machine's own `sdmmc.dll` multiplies a
+    /// millisecond by 3250 before spinning on OSCR. The older rate is 13.4%
+    /// fast, which shortens every driver delay and gains the guest time.
+    #[test]
+    fn the_rate_is_the_pxa27x_one() {
+        assert_eq!(OST_HZ, 3_250_000, "3.6864 MHz is the PXA25x");
+        assert_eq!(1_000_000_000 / OST_HZ, 307, "308 ns a tick, near enough");
     }
 
     #[test]
