@@ -240,7 +240,50 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+mod platform {
+    /// The helpers that can put a dialog on a desktop, best first.
+    ///
+    /// There is no `MessageBoxW` here -- no dialog is part of the system, so
+    /// this asks the desktop for one. `zenity` is GTK and `kdialog` is Qt, and
+    /// **both are read by Orca**, which is the whole point: a message a
+    /// screen reader does not announce has not been delivered. `notify-send`
+    /// is a notification rather than a dialog and is usually announced too.
+    ///
+    /// `xmessage` is last and deliberately so. It is raw Xlib with no AT-SPI
+    /// at all, so a blind user is told nothing by it -- it is here only
+    /// because a sighted user debugging a headless-ish box may still see it,
+    /// and because something is better than nothing.
+    const DIALOGS: &[(&str, &[&str])] = &[
+        ("zenity", &["--error", "--no-markup", "--title", "{title}", "--text", "{message}"]),
+        ("kdialog", &["--error", "{message}", "--title", "{title}"]),
+        ("notify-send", &["-u", "critical", "{title}", "{message}"]),
+        ("xmessage", &["-center", "{message}"]),
+    ];
+
+    pub fn complain(title: &str, message: &str) {
+        // Nothing to put a dialog on. The `eprintln!` the caller has already
+        // done is the whole of the report, which is right for a terminal.
+        if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+            return;
+        }
+        for (program, template) in DIALOGS {
+            let args = template
+                .iter()
+                .map(|a| a.replace("{title}", title).replace("{message}", message));
+            // Waiting matters: this is said just before stopping, and a dialog
+            // the process outlives is one that vanishes before it is read.
+            // A helper that is not installed fails here and the next is tried.
+            if let Ok(status) = std::process::Command::new(program).args(args).status() {
+                if status.success() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
 mod platform {
     pub fn complain(_title: &str, _message: &str) {}
 }
