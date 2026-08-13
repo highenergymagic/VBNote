@@ -461,7 +461,7 @@ fn parse_args() -> Result<Options, String> {
                      \x20 host + G             capture the keyboard, or give it back\n\
                      \x20 host + R             reset the machine\n\
                      \x20 host + Q             quit, saving the flash disk\n\
-                     Captured, every key goes to the machine and none to Windows.\n\
+                     Captured, every key goes to the machine and none to the host.\n\
                      Released, the reverse. It starts released, and says which it is.\n\
                      \x20 --type TEXT          press TEXT into the key matrix\n\
                      \x20 --type-after SECS    guest seconds to wait first (default 120)\n\
@@ -1584,12 +1584,23 @@ fn run(
         // so it exists purely to be typed at. Reading stdin instead meant
         // nothing arrived until Enter, which a menu answering single keys
         // never sees.
-        // The window is for focus and for closing; the keys come from the
-        // hook, which sees keys the window library cannot. Handing it the
-        // sender as well would deliver everything twice.
-        std::thread::spawn(window::run_without_keys);
-        if let Err(e) = hostkey::install(key_tx, command_tx.clone()) {
-            eprintln!("keyboard: {e}");
+        // The hook first, where there is one. It sees keys the window library
+        // cannot -- neither Alt, which is `READ` and `FUNCTION` -- so where it
+        // installs, the window is for focus and for closing only, and handing
+        // it the senders as well would deliver everything twice.
+        //
+        // Where there is none, the window is the only way in and carries the
+        // lot. That is not a degraded mode to apologise for: it is the whole
+        // keyboard on every platform but Windows.
+        match hostkey::install(key_tx.clone(), command_tx.clone()) {
+            Ok(()) => {
+                std::thread::spawn(window::run_without_keys);
+            }
+            Err(e) => {
+                eprintln!("keyboard: {e}; the window will carry the keys instead");
+                let commands = command_tx.clone();
+                std::thread::spawn(move || window::run(Some(key_tx), Some(commands)));
+            }
         }
     }
     // The key-down line idles high. It is active low -- the board pulls it

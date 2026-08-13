@@ -62,7 +62,15 @@ reads `VBNote.ini`, and boots `KeysoftSystemDisk.img` with `FlashDisk.img` and
   expected. The wizard asks the same question in a dialog with a way past it.
 - **No machine there means a dialog, not a message.** There is no console when
   a windowed program is started from a menu, so `eprintln!` reaches nobody. It
-  says so in a `MessageBoxW`, which a screen reader reads, and stops.
+  says so in a `MessageBoxW`, which a screen reader reads, and stops. Off
+  Windows there is no dialog in the system to call, so it asks the desktop for
+  one: `zenity`, then `kdialog`, then `notify-send`, first one that works,
+  waiting for it because the process stops straight afterwards and a dialog
+  the process outlives is one nobody reads. **`xmessage` is last and is not an
+  accessible answer** -- raw Xlib, no AT-SPI, so Orca says nothing about it;
+  it is there only so a sighted user sees *something*. With no `DISPLAY` or
+  `WAYLAND_DISPLAY` it does not try, which is right: that is a terminal, and
+  the `eprintln!` is the report.
 - **The bootloader argument is optional now.** A flash image already contains
   one; requiring `EBOOT.bin` alongside it was an accident of how the CLI grew.
 - **`VBNote.ini` is flat `key = value`**, no sections, comments with `#` or
@@ -143,6 +151,62 @@ vbnote roms/EBOOT.bin --flash --nk roms/NK.bin --cpu-mhz 63 \
 - **A boot to the first prompt takes about 90 seconds** with `--cpu-mhz 63`,
   or 7 minutes without it. Run it in the background and poll `status` rather
   than blocking on it.
+
+## It runs on Linux
+
+Measured, not assumed: built and booted against KeySoft 8.0 on Debian 13,
+x86-64, Rust 1.97. 360 tests, no warnings, `clippy -D warnings` clean, first
+speech at 72 seconds of guest time, **0 audio underruns**, clean card flush.
+
+**The emulator itself was already portable and nobody had noticed.** `arm`,
+`pxa270` and `ceromfs` contain no platform code at all, and `gandalf` has one
+`#[cfg(windows)]` -- `mark_sparse`, an NTFS ioctl, whose absence costs nothing
+because `set_len` gives a sparse file here for free. Every dependency was
+already cross-platform and `Cargo.lock` already carried `alsa`, `x11-dl`,
+`wayland-client` and `speech-dispatcher`. **Nothing was replaced or ported.**
+
+```
+sudo apt install libasound2-dev libclang-dev
+```
+
+is the whole of it, on top of `libx11-dev`, `libxkbcommon-dev`,
+`libspeechd-dev` and `libwayland-dev`. `libclang` is not obvious and the error
+does not say why: `speech-dispatcher-sys` runs **bindgen**, which needs
+`libclang.so` *and* clang's own `stddef.h`, and only the `-dev` package brings
+the second. Without it the failure is `'stddef.h' file not found` from inside
+`/usr/include/stdio.h`, which reads like a broken system and is not.
+
+- **cpal finds ALSA, minifb finds X11, `tts` finds speech-dispatcher.** That
+  last one is a better story than Windows': the fallback voice *is* Orca's own
+  engine, so there is no equivalent of the NVDA client to ship and no
+  second-best voice. `announce.rs` needs no change -- NVDA is simply never
+  found and the system path is taken.
+- **It is faster here.** Free-running, this host holds **130%** of real time
+  against the 73% recorded for the Windows machine at `--cpu-mhz 63`. That is
+  different hardware and not a like-for-like comparison, but it does mean **63
+  may not be the right default on Linux** and nobody has measured what is.
+  Higher is only worth trying where the interpreter can actually retire it;
+  re-read the warning under `--cpu-mhz` before changing anything.
+- **A real output device works, and it sounds right.** The boots measured above
+  were `--mute --wav`, which exercises the resampler and the counters but never
+  opens a host card; cpal actually taking ALSA was the one link in the chain
+  left untried. It has since been run on X11 with audio and the speech is
+  **clean by ear -- no stutter, no gaps mid-phrase**, which is the test that
+  matters here and the one "Verifying by ear" is about. That is consistent with
+  the rest of it rather than a surprise: stutter is what a machine that cannot
+  hold real time sounds like, and this host holds 130% where the Windows one
+  managed 73%. Counted underruns for that particular run were not recorded --
+  the boots that report `0` were the `--wav` ones -- so what is known is that it
+  sounded right, not that a counter said zero. Still not tried: **Wayland**, for
+  the window or for anything else.
+- **`installer/` is Inno Setup and CI is `windows-latest` only.** There is no
+  Linux packaging and no Linux job. `home::directory()` already falls back to
+  `$HOME`, so `~/.VBNote` and installed mode work; what a user is *told* does
+  not, because the "not set up yet" message says to run VBNote Setup **from
+  the Start menu**, which is wrong wording on a desktop that has none.
+
+**The keyboard was the only real gap, and it is fixed** -- see the section
+below.
 
 ## Verifying by ear
 
@@ -273,6 +337,45 @@ is permanently false and `READ`/`FUNCTION` can never be held through it.
 `app/src/hostkey.rs` installs `WH_KEYBOARD_LL`, which sees every key first,
 tells left from right, and can swallow what it takes. Windows' virtual-key
 codes for these *are* the machine's codes, so nothing needs translating.
+
+**Where there is no hook, the window carries everything**, and that is the
+whole of the keyboard on every platform but Windows. `hostkey::install`
+failing used to be an `eprintln!` and nothing else, which left Linux with a
+window and **no keyboard at all**; it now falls back to handing `window::run`
+both senders. The window already translated keystrokes -- that path was kept
+alive on purpose -- and it gained the three host chords and the capture state
+to go with them.
+
+- **Capture means the same thing to the user on both**: starts released,
+  `host`+`G` to capture, announced either way. The promise underneath is
+  weaker here, because the window only sees keys while focused and holds
+  nothing when it is not, but from the user's side it is the same promise and
+  the same habit.
+- It does **not** inherit the hook's trap, and so does not need the rule that
+  works around it. Releasing must not depend on the emulator's loop *there*,
+  because the hook holds the user's own keyboard; here nothing is held and not
+  forwarding a key is a purely local decision.
+- **Global capture is not coming.** Under Wayland an application may not ask
+  for a global key grab at all, so focus-scoped is the honest ceiling.
+- The hook's `decide` and its VK table are still compiled and still **tested**
+  on platforms that have no hook, behind one `cfg_attr` rather than a `cfg`.
+  That is deliberate: `decide` is the specification the window reimplements,
+  and hiding it would stop testing the specification on the platform that
+  needs it most.
+- **Verified end to end, not assumed**: driven by XTEST on a nested Xvfb
+  display, `9 arrived from the window, 9 pressed into the matrix` with `24
+  scans came back with a key down`, a key pressed while released counted zero,
+  `host`+`G` and `host`+`Q` swallowed rather than typed, and the card saved on
+  the way out. Two traps if this is ever re-run: `xdotool key --window` sends
+  `XSendEvent`, which minifb ignores -- **XTEST, and therefore focus, is
+  required** -- and `xdotool key` presses and releases inside ~12 ms, which a
+  60 fps poll misses entirely, so each key needs an explicit held
+  `keydown`/`keyup`.
+- **Left Alt is `READ`, and most window managers bind Alt themselves.** A WM
+  that takes Alt+letter for its own purposes gives exactly the symptom
+  recorded twice already in this file -- "READ does nothing" -- with a third
+  cause that is not in the emulator at all. Untested: Xvfb has no window
+  manager.
 
 | machine key | host key |
 |---|---|
@@ -709,6 +812,23 @@ clock. The emulator seeds it from the host's **local** time at startup
 CE's OAL hands the kernel local time and `GetSystemTime` takes the bias back
 off, so UTC would be wrong by the offset. Without this the machine asks three
 clock questions out loud at every boot, to somebody who cannot see the screen.
+
+**Local time is asked of the platform, because `std` will not answer it.**
+`GetLocalTime` on Windows, `localtime_r` elsewhere. The zone is not a constant
+a program can hold -- it is whatever the host's rules say for *this* instant,
+summer and winter included -- and asking is cheaper than a dependency carrying
+the zoneinfo database. Off Windows this used to be UTC, with a comment saying
+Linux "is not the platform the machine is used on"; it now is one, and the
+machine was quietly wrong by the offset there.
+
+Only the **nine POSIX-ordered fields** of `struct tm` are read. The tail is not
+portable -- glibc and the BSDs add `tm_gmtoff` and `tm_zone`, others do not --
+so the declaration carries room for those two and never looks at either: too
+short a tail is a buffer the C library writes past, an unread one costs
+nothing. The test asserts local and UTC differ by **no more than a day**,
+which is what a mis-declared struct fails. It cannot assert they *differ*,
+because on a host set to UTC they are equal and correctly so, and a range test
+alone would pass while the machine announced the wrong day.
 
 ## Open problems
 

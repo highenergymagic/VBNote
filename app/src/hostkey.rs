@@ -58,6 +58,15 @@
 //! anywhere. The emulator is told afterwards, and all it does with the news is
 //! say it out loud. If it never hears, the keyboard still comes back.
 
+// Where there is no hook, everything below except `install` is reached only by
+// the tests, and every one of these is a `dead_code` warning on that platform.
+// They are compiled there anyway, on purpose: `decide` is the specification of
+// what the host key means, `window` implements the same three chords against
+// it, and the tests that pin them are the only thing keeping the two
+// keyboards from drifting apart. Hiding this behind `#[cfg(windows)]` would
+// stop testing the specification on the platform that reimplements it.
+#![cfg_attr(not(windows), allow(dead_code))]
+
 use crate::keys::{Mods, Press};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;

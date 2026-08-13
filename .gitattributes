@@ -1,0 +1,8 @@
+# This repository is CRLF, and stays that way.
+#
+# Shell scripts are the exception and have to be: a CR on the end of the
+# shebang makes the kernel look for an interpreter whose name ends in a
+# carriage return, and the script fails to run at all with an error naming a
+# file that plainly exists. Pinning it here means a checkout cannot break
+# boot-ks8.sh whatever the machine's own settings say.
+*.sh text eol=lf
