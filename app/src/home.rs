@@ -27,6 +27,7 @@
 //! being fatal, because a settings file is something a person edits and a
 //! typo should not stop the machine starting.
 
+use crate::hostkey;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -66,6 +67,21 @@ cpu_mhz = 63
 # the keyboard in the meantime. Only a backstop; keys are normally released as
 # soon as the machine has seen them.
 key_hold_ms = 800
+
+# Which key on your keyboard is the machine's FUNCTION key.
+#
+# right_alt is the default, but some keyboards use right Alt for characters of
+# their own (AltGr), and holding it with a letter can type one of those
+# instead. If FUNCTION misbehaves on yours, move it to a key the machine would
+# never use: menu (the application key), caps_lock, left_windows,
+# right_windows, or f4 to f10 and f12. F11 is VBNote's own key and cannot be
+# used, and F1-F3 are the machine's HELP, REPEAT and MENU.
+#
+# left_shift and right_shift are allowed too, at a price: the key you choose
+# becomes FUNCTION and stops being SHIFT, so every capital letter and every
+# shifted chord then happens on the other shift. It is the price of having the
+# chord key under the thumb where the machine's FUNCTION sits.
+function_key = right_alt
 
 # How big to make the removable drive, in megabytes, the first time it is
 # made. Files put in the VBNote USB Drive folder in Documents are on it when
@@ -108,6 +124,10 @@ pub fn is_set_up(home: &Path) -> bool {
 pub struct Settings {
     pub cpu_mhz: u64,
     pub key_hold_ms: u64,
+    /// The host key that stands in for the machine's `FUNCTION`, as a Windows
+    /// virtual-key code. See `hostkey::function_key_named` for what can be
+    /// chosen and how a name becomes one.
+    pub function_key: u32,
     /// How big to make the removable drive, the first time, in megabytes.
     pub usb_disk_mb: u64,
     pub mute: bool,
@@ -121,6 +141,7 @@ impl Default for Settings {
         Settings {
             cpu_mhz: 63,
             key_hold_ms: 800,
+            function_key: hostkey::vk::RMENU,
             usb_disk_mb: 256,
             mute: false,
             debug: false,
@@ -172,6 +193,12 @@ impl Settings {
             match key.as_str() {
                 "cpu_mhz" => number(value, &mut settings.cpu_mhz, key, &mut complaints),
                 "key_hold_ms" => number(value, &mut settings.key_hold_ms, key, &mut complaints),
+                "function_key" => match hostkey::function_key_named(value) {
+                    Some(vk) => settings.function_key = vk,
+                    None => complaints.push(format!(
+                        "function_key = {value:?} is not a key FUNCTION can be"
+                    )),
+                },
                 "usb_disk_mb" => number(value, &mut settings.usb_disk_mb, key, &mut complaints),
                 "mute" => yes_no(value, &mut settings.mute, key, &mut complaints),
                 "debug" => yes_no(value, &mut settings.debug, key, &mut complaints),
@@ -240,7 +267,50 @@ mod platform {
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+mod platform {
+    /// The helpers that can put a dialog on a desktop, best first.
+    ///
+    /// There is no `MessageBoxW` here -- no dialog is part of the system, so
+    /// this asks the desktop for one. `zenity` is GTK and `kdialog` is Qt, and
+    /// **both are read by Orca**, which is the whole point: a message a
+    /// screen reader does not announce has not been delivered. `notify-send`
+    /// is a notification rather than a dialog and is usually announced too.
+    ///
+    /// `xmessage` is last and deliberately so. It is raw Xlib with no AT-SPI
+    /// at all, so a blind user is told nothing by it -- it is here only
+    /// because a sighted user debugging a headless-ish box may still see it,
+    /// and because something is better than nothing.
+    const DIALOGS: &[(&str, &[&str])] = &[
+        ("zenity", &["--error", "--no-markup", "--title", "{title}", "--text", "{message}"]),
+        ("kdialog", &["--error", "{message}", "--title", "{title}"]),
+        ("notify-send", &["-u", "critical", "{title}", "{message}"]),
+        ("xmessage", &["-center", "{message}"]),
+    ];
+
+    pub fn complain(title: &str, message: &str) {
+        // Nothing to put a dialog on. The `eprintln!` the caller has already
+        // done is the whole of the report, which is right for a terminal.
+        if std::env::var_os("DISPLAY").is_none() && std::env::var_os("WAYLAND_DISPLAY").is_none() {
+            return;
+        }
+        for (program, template) in DIALOGS {
+            let args = template
+                .iter()
+                .map(|a| a.replace("{title}", title).replace("{message}", message));
+            // Waiting matters: this is said just before stopping, and a dialog
+            // the process outlives is one that vanishes before it is read.
+            // A helper that is not installed fails here and the next is tried.
+            if let Ok(status) = std::process::Command::new(program).args(args).status() {
+                if status.success() {
+                    return;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(not(any(windows, unix)))]
 mod platform {
     pub fn complain(_title: &str, _message: &str) {}
 }
@@ -257,6 +327,7 @@ mod tests {
         let plain = Settings::default();
         assert_eq!(from_file.cpu_mhz, plain.cpu_mhz);
         assert_eq!(from_file.key_hold_ms, plain.key_hold_ms);
+        assert_eq!(from_file.function_key, plain.function_key);
         assert_eq!(from_file.mute, plain.mute);
         assert_eq!(from_file.debug, plain.debug);
         assert!(from_file.complaints.is_empty(), "{:?}", from_file.complaints);
@@ -269,6 +340,30 @@ mod tests {
         assert_eq!(s.key_hold_ms, 1200);
         assert!(s.mute);
         assert!(s.complaints.is_empty());
+    }
+
+    /// FUNCTION can be moved off right Alt, for keyboards that use it for
+    /// characters of their own. A name it cannot be is reported, and the
+    /// default is kept rather than anything half-understood.
+    #[test]
+    fn function_key_is_read_and_validated() {
+        let s = Settings::parse("function_key = menu\n");
+        assert_eq!(s.function_key, hostkey::vk::MENU);
+        assert!(s.complaints.is_empty(), "{:?}", s.complaints);
+
+        let s = Settings::parse("function_key = caps_lock\n");
+        assert_eq!(s.function_key, hostkey::vk::CAPS_LOCK);
+
+        let s = Settings::parse("function_key = right_alt\n");
+        assert_eq!(s.function_key, hostkey::vk::RMENU);
+
+        let s = Settings::parse("function_key = right_shift\n");
+        assert_eq!(s.function_key, hostkey::vk::RSHIFT);
+
+        let s = Settings::parse("function_key = f11\n");
+        assert_eq!(s.function_key, hostkey::vk::RMENU, "kept the default");
+        assert_eq!(s.complaints.len(), 1, "{:?}", s.complaints);
+        assert!(s.complaints[0].contains("function_key"));
     }
 
     #[test]

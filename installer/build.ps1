@@ -43,7 +43,8 @@ Need 'PyInstaller' { python -m PyInstaller --version 2>$null } `
      'pip install pyinstaller'
 $iscc = @(
     "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+    "$env:ProgramFiles\Inno Setup 6\ISCC.exe",
+    "$env:localappdata\Programs\Inno Setup 6\ISCC.exe"
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $iscc) {
     Write-Error "Inno Setup 6 is needed and was not found.`n  https://jrsoftware.org/isdl.php"

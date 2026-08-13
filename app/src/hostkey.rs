@@ -8,12 +8,16 @@
 //! every key before any application does, distinguishes left from right, and
 //! can swallow what it takes.
 //!
-//! That also makes the modifiers safe. `READ` and `FUNCTION` are the two Alt
-//! keys, and Alt on its own would normally put Windows into menu-bar mode,
-//! where keystrokes go to a menu instead of to the window. While captured the
-//! hook eats them before that can happen, so pressing `READ` alone -- which
-//! does nothing on the real machine, and is therefore a natural thing to try
-//! -- does nothing here either.
+//! That also makes the modifiers safe. `READ` is left Alt and `FUNCTION` is
+//! right Alt by default, and Alt on its own would normally put Windows into
+//! menu-bar mode, where keystrokes go to a menu instead of to the window.
+//! While captured the hook eats them before that can happen, so pressing
+//! `READ` alone -- which does nothing on the real machine, and is therefore a
+//! natural thing to try -- does nothing here either. `FUNCTION` is not stuck
+//! on right Alt: some keyboards use that key for characters of their own, so
+//! it can be moved, `set_function_key` here or `function_key` in `VBNote.ini`.
+//! A shift key can be chosen, at the price of losing `SHIFT` on it -- the
+//! other shift has to carry every capital after that.
 //!
 //! # The host key
 //!
@@ -58,8 +62,17 @@
 //! anywhere. The emulator is told afterwards, and all it does with the news is
 //! say it out loud. If it never hears, the keyboard still comes back.
 
+// Where there is no hook, everything below except `install` is reached only by
+// the tests, and every one of these is a `dead_code` warning on that platform.
+// They are compiled there anyway, on purpose: `decide` is the specification of
+// what the host key means, `window` implements the same three chords against
+// it, and the tests that pin them are the only thing keeping the two
+// keyboards from drifting apart. Hiding this behind `#[cfg(windows)]` would
+// stop testing the specification on the platform that reimplements it.
+#![cfg_attr(not(windows), allow(dead_code))]
+
 use crate::keys::{Mods, Press};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::mpsc::Sender;
 
 /// Something the user asked of the emulator rather than of the machine.
@@ -85,8 +98,30 @@ pub mod vk {
     pub const RCONTROL: u32 = 0xA3;
     /// `READ` on the machine, the chord key.
     pub const LMENU: u32 = 0xA4;
-    /// `FUNCTION` on the machine.
+    /// `FUNCTION` on the machine, and the host key that stands in for it by
+    /// default. Some keyboards use right Alt for characters of their own
+    /// (AltGr), so `FUNCTION` can be moved to another key.
     pub const RMENU: u32 = 0xA5;
+
+    /// The keys `FUNCTION` can be moved to. None of them is a key the machine
+    /// has or the emulator has taken -- the machine's own `HELP`, `RPT` and
+    /// `MENU` are `F1`-`F3`, `F11` is the host key, and `READ` and `CONTROL`
+    /// are where they always are. The shifts are allowed too, at a price: the
+    /// key chosen becomes `FUNCTION` and stops being `SHIFT`, so the other
+    /// shift has to do all of that work. See `function_key_named`.
+    pub const CAPS_LOCK: u32 = 0x14;
+    pub const LEFT_WIN: u32 = 0x5B;
+    pub const RIGHT_WIN: u32 = 0x5C;
+    /// The application key, between the Windows keys and right control.
+    pub const MENU: u32 = 0x5D;
+    pub const F4: u32 = 0x73;
+    pub const F5: u32 = 0x74;
+    pub const F6: u32 = 0x75;
+    pub const F7: u32 = 0x76;
+    pub const F8: u32 = 0x77;
+    pub const F9: u32 = 0x78;
+    pub const F10: u32 = 0x79;
+    pub const F12: u32 = 0x7B;
 
     /// The host key. Never reaches the machine.
     ///
@@ -111,6 +146,79 @@ static SHIFT: AtomicBool = AtomicBool::new(false);
 static CONTROL: AtomicBool = AtomicBool::new(false);
 static READ: AtomicBool = AtomicBool::new(false);
 static FUNCTION: AtomicBool = AtomicBool::new(false);
+
+/// Which host key stands in for the machine's `FUNCTION`.
+///
+/// Right Alt is the default, and is the machine's own code (`named::FUNCTION`
+/// is `0xA5`). But some keyboards use right Alt for characters of their own,
+/// so it is settable -- `set_function_key` before the hook is installed, or
+/// `function_key` in `VBNote.ini` for the installed machine.
+static FUNCTION_KEY: AtomicU32 = AtomicU32::new(vk::RMENU);
+
+/// The host key that is the machine's `FUNCTION`, right now.
+pub fn function_key() -> u32 {
+    FUNCTION_KEY.load(Ordering::Relaxed)
+}
+
+/// Choose the host key that stands in for the machine's `FUNCTION`.
+pub fn set_function_key(vk: u32) {
+    FUNCTION_KEY.store(vk, Ordering::Relaxed);
+}
+
+/// The host keys `FUNCTION` can be, by the name a settings file writes.
+///
+/// `None` for anything else, so a typo in `VBNote.ini` says so rather than
+/// silently keeping right Alt and telling nobody.
+///
+/// The shifts are choices, and choosing one costs you SHIFT on that key: the
+/// key becomes `FUNCTION` and the other shift key has to carry every capital
+/// and every shifted chord. That is a real price, so the settings file says so
+/// -- but it is also where the machine's `FUNCTION` sits, so for a keyboard
+/// with a natural thumb key on the right it is the request. READ and CONTROL
+/// are not choices, so they cannot be taken.
+pub fn function_key_named(name: &str) -> Option<u32> {
+    let code = match name.to_ascii_lowercase().as_str() {
+        "right_alt" => vk::RMENU,
+        "left_shift" => vk::LSHIFT,
+        "right_shift" => vk::RSHIFT,
+        "menu" | "application" => vk::MENU,
+        "caps_lock" => vk::CAPS_LOCK,
+        "left_windows" => vk::LEFT_WIN,
+        "right_windows" => vk::RIGHT_WIN,
+        "f4" => vk::F4,
+        "f5" => vk::F5,
+        "f6" => vk::F6,
+        "f7" => vk::F7,
+        "f8" => vk::F8,
+        "f9" => vk::F9,
+        "f10" => vk::F10,
+        "f12" => vk::F12,
+        _ => return None,
+    };
+    Some(code)
+}
+
+/// What the chosen `FUNCTION` key is called, for saying out loud.
+pub fn function_key_spoken() -> String {
+    match function_key() {
+        vk::RMENU => "right Alt".into(),
+        vk::LSHIFT => "left shift".into(),
+        vk::RSHIFT => "right shift".into(),
+        vk::CAPS_LOCK => "Caps Lock".into(),
+        vk::LEFT_WIN => "the left Windows key".into(),
+        vk::RIGHT_WIN => "the right Windows key".into(),
+        vk::F4 => "F4".into(),
+        vk::F5 => "F5".into(),
+        vk::F6 => "F6".into(),
+        vk::F7 => "F7".into(),
+        vk::F8 => "F8".into(),
+        vk::F9 => "F9".into(),
+        vk::F10 => "F10".into(),
+        vk::F12 => "F12".into(),
+        other => format!("key {other:#04x}"),
+    }
+}
+
 /// A question is on screen and wants the keyboard to itself.
 static DIALOG_UP: AtomicBool = AtomicBool::new(false);
 /// Which keys are physically down, one bit per virtual-key code.
@@ -169,9 +277,16 @@ pub enum Verdict {
 
 /// Decide what to do with one key event.
 ///
-/// `captured` and `host_down` are passed in rather than read from the statics
-/// so that every combination can be exercised.
-pub fn decide(vk: u32, down: bool, captured: bool, host_down: bool, focused: bool) -> Verdict {
+/// `captured`, `host_down` and `function` are passed in rather than read from
+/// the statics so that every combination can be exercised.
+pub fn decide(
+    vk: u32,
+    down: bool,
+    captured: bool,
+    host_down: bool,
+    focused: bool,
+    function: u32,
+) -> Verdict {
     // With another application in front this is not here at all.
     if !focused {
         return Verdict::PassThrough;
@@ -202,7 +317,7 @@ pub fn decide(vk: u32, down: bool, captured: bool, host_down: bool, focused: boo
     // keystroke in the queue, Windows repeated it while it was held, and the
     // letter it was supposed to modify ended up behind a wall of them. The
     // machine has no use for a lone `READ` anyway -- it is a chord key.
-    if modifier_flag(vk).is_some() {
+    if modifier_flag(vk, function).is_some() {
         return Verdict::Swallow;
     }
     if down {
@@ -213,12 +328,20 @@ pub fn decide(vk: u32, down: bool, captured: bool, host_down: bool, focused: boo
 }
 
 /// Whether a key is one of the machine's modifiers, and which.
-fn modifier_flag(vk: u32) -> Option<&'static AtomicBool> {
+///
+/// The chosen FUNCTION key wins over everything else, so it can even be a
+/// shift key -- a keyboard that only has a natural chord key under the right
+/// thumb is a real request, and the other shift keeps SHIFT. READ and CONTROL
+/// are not among the choices (`function_key_named`), so they cannot be taken
+/// by a setting.
+fn modifier_flag(vk: u32, function: u32) -> Option<&'static AtomicBool> {
+    if vk == function {
+        return Some(&FUNCTION);
+    }
     match vk {
         vk::LSHIFT | vk::RSHIFT => Some(&SHIFT),
         vk::LCONTROL | vk::RCONTROL => Some(&CONTROL),
         vk::LMENU => Some(&READ),
-        vk::RMENU => Some(&FUNCTION),
         _ => None,
     }
 }
@@ -323,7 +446,8 @@ mod platform {
 
         // Modifier state is tracked whatever else happens to the key, or a
         // modifier let go of while released would stay down for ever.
-        if let Some(flag) = modifier_flag(vk) {
+        let function = function_key();
+        if let Some(flag) = modifier_flag(vk, function) {
             flag.store(down, Ordering::Relaxed);
         }
         if vk == vk::HOST {
@@ -335,7 +459,7 @@ mod platform {
         // A question on screen is answered with the keyboard, so while one is
         // up this takes nothing at all.
         let focused = ours_is_in_front() && !DIALOG_UP.load(Ordering::Relaxed);
-        match decide(vk, down, captured, host_down, focused) {
+        match decide(vk, down, captured, host_down, focused, function) {
             Verdict::PassThrough => CallNextHookEx(std::ptr::null_mut(), code, wparam, lparam),
             Verdict::Swallow => 1,
             Verdict::Run(command) => {
@@ -401,17 +525,26 @@ mod tests {
     /// Focused and released, the host keeps its keyboard. This is the state
     /// the emulator starts in, and getting it wrong means every key in every
     /// application disappears.
+    /// `decide` with the default FUNCTION key (right Alt). Most of these
+    /// tests are about capture and chords, not about which key is FUNCTION.
+    fn d(vk: u32, down: bool, captured: bool, host_down: bool, focused: bool) -> Verdict {
+        decide(vk, down, captured, host_down, focused, vk::RMENU)
+    }
+
+    /// Focused and released, the host keeps its keyboard. This is the state
+    /// the emulator starts in, and getting it wrong means every key in every
+    /// application disappears.
     #[test]
     fn released_keys_go_to_the_host() {
-        assert_eq!(decide(b'A' as u32, true, false, false, true), Verdict::PassThrough);
-        assert_eq!(decide(vk::LMENU, true, false, false, true), Verdict::PassThrough);
+        assert_eq!(d(b'A' as u32, true, false, false, true), Verdict::PassThrough);
+        assert_eq!(d(vk::LMENU, true, false, false, true), Verdict::PassThrough);
     }
 
     /// Captured, nothing reaches the host and every key reaches the machine.
     #[test]
     fn captured_keys_go_to_the_machine() {
-        assert_eq!(decide(b'A' as u32, true, true, false, true), Verdict::Send(b'A' as u32));
-        assert_eq!(decide(b'A' as u32, false, true, false, true), Verdict::Swallow);
+        assert_eq!(d(b'A' as u32, true, true, false, true), Verdict::Send(b'A' as u32));
+        assert_eq!(d(b'A' as u32, false, true, false, true), Verdict::Swallow);
     }
 
     /// With another window in front this is not here at all: no key taken, no
@@ -426,7 +559,7 @@ mod tests {
             for host_down in [false, true] {
                 for vk in [b'A' as u32, vk::HOST, vk::G, vk::Q] {
                     assert_eq!(
-                        decide(vk, true, captured, host_down, false),
+                        d(vk, true, captured, host_down, false),
                         Verdict::PassThrough,
                         "{vk:#04x} was taken while another window was in front"
                     );
@@ -440,7 +573,7 @@ mod tests {
     fn the_host_key_is_never_sent_on() {
         for captured in [false, true] {
             for down in [false, true] {
-                assert_eq!(decide(vk::HOST, down, captured, false, true), Verdict::Swallow);
+                assert_eq!(d(vk::HOST, down, captured, false, true), Verdict::Swallow);
             }
         }
     }
@@ -449,10 +582,10 @@ mod tests {
     /// it is how the keyboard is given back.
     #[test]
     fn the_host_chords_command_the_emulator() {
-        assert_eq!(decide(vk::G, true, false, true, true), Verdict::Run(Command::Capture(true)));
-        assert_eq!(decide(vk::G, true, true, true, true), Verdict::Run(Command::Capture(false)));
-        assert_eq!(decide(vk::R, true, true, true, true), Verdict::Run(Command::Reset));
-        assert_eq!(decide(vk::Q, true, true, true, true), Verdict::Run(Command::Quit));
+        assert_eq!(d(vk::G, true, false, true, true), Verdict::Run(Command::Capture(true)));
+        assert_eq!(d(vk::G, true, true, true, true), Verdict::Run(Command::Capture(false)));
+        assert_eq!(d(vk::R, true, true, true, true), Verdict::Run(Command::Reset));
+        assert_eq!(d(vk::Q, true, true, true, true), Verdict::Run(Command::Quit));
     }
 
     /// A host chord must never also reach the machine or the host. `host`+`Q`
@@ -461,7 +594,7 @@ mod tests {
     #[test]
     fn a_host_chord_goes_nowhere_else() {
         for vk in [vk::G, vk::R, vk::Q, b'X' as u32] {
-            let v = decide(vk, true, true, true, true);
+            let v = d(vk, true, true, true, true);
             assert_ne!(v, Verdict::PassThrough, "{vk:#04x} reached the host");
             assert_ne!(v, Verdict::Send(vk), "{vk:#04x} reached the machine");
         }
@@ -471,7 +604,7 @@ mod tests {
     /// finding out a chord does not exist cannot type into another window.
     #[test]
     fn an_unassigned_host_chord_does_nothing_at_all() {
-        assert_eq!(decide(b'Z' as u32, true, false, true, true), Verdict::Swallow);
+        assert_eq!(d(b'Z' as u32, true, false, true, true), Verdict::Swallow);
     }
 
     /// The three keys the machine is driven by, mapped as asked: `CONTROL` on
@@ -480,17 +613,17 @@ mod tests {
     /// looking, from the outside, like a working keyboard.
     #[test]
     fn the_modifiers_are_where_they_were_asked_for() {
-        assert!(std::ptr::eq(modifier_flag(vk::LCONTROL).unwrap(), &CONTROL));
-        assert!(std::ptr::eq(modifier_flag(vk::LMENU).unwrap(), &READ));
-        assert!(std::ptr::eq(modifier_flag(vk::RMENU).unwrap(), &FUNCTION));
-        assert!(std::ptr::eq(modifier_flag(vk::LSHIFT).unwrap(), &SHIFT));
-        assert!(std::ptr::eq(modifier_flag(vk::RSHIFT).unwrap(), &SHIFT));
+        assert!(std::ptr::eq(modifier_flag(vk::LCONTROL, vk::RMENU).unwrap(), &CONTROL));
+        assert!(std::ptr::eq(modifier_flag(vk::LMENU, vk::RMENU).unwrap(), &READ));
+        assert!(std::ptr::eq(modifier_flag(vk::RMENU, vk::RMENU).unwrap(), &FUNCTION));
+        assert!(std::ptr::eq(modifier_flag(vk::LSHIFT, vk::RMENU).unwrap(), &SHIFT));
+        assert!(std::ptr::eq(modifier_flag(vk::RSHIFT, vk::RMENU).unwrap(), &SHIFT));
         // Right control is `CONTROL` too, the same way both shifts are
         // `SHIFT`. It used to be the host key; now that F11 is, a user who
         // presses it gets the modifier they meant rather than nothing.
-        assert!(std::ptr::eq(modifier_flag(vk::RCONTROL).unwrap(), &CONTROL));
+        assert!(std::ptr::eq(modifier_flag(vk::RCONTROL, vk::RMENU).unwrap(), &CONTROL));
         // The host key is not a machine modifier.
-        assert!(modifier_flag(vk::HOST).is_none());
+        assert!(modifier_flag(vk::HOST, vk::RMENU).is_none());
     }
 
     /// A modifier is held, not sent. This is what stopped `READ` and
@@ -501,7 +634,7 @@ mod tests {
     fn a_modifier_is_never_a_keystroke_of_its_own() {
         for vk in [vk::LMENU, vk::RMENU, vk::LCONTROL, vk::LSHIFT, vk::RSHIFT] {
             assert_eq!(
-                decide(vk, true, true, false, true),
+                d(vk, true, true, false, true),
                 Verdict::Swallow,
                 "{vk:#04x} was sent as a keystroke"
             );
@@ -513,7 +646,7 @@ mod tests {
     fn a_modifier_reaches_the_machine_by_being_held() {
         let kb = gandalf::keyboard::Keyboard::default();
         for vk in [vk::LMENU, vk::RMENU, vk::LCONTROL] {
-            let flag = modifier_flag(vk).expect("should be a modifier");
+            let flag = modifier_flag(vk, vk::RMENU).expect("should be a modifier");
             flag.store(true, Ordering::Relaxed);
             let held = mods();
             flag.store(false, Ordering::Relaxed);
@@ -545,7 +678,7 @@ mod tests {
     fn what_the_hook_sends_is_a_key_the_matrix_has() {
         let kb = gandalf::keyboard::Keyboard::default();
         for vk in [b'A' as u32, b'Z' as u32, b'0' as u32, 0x0D, 0x20, 0x1B, 0x2E, 0x26, 0x70] {
-            match decide(vk, true, true, false, true) {
+            match d(vk, true, true, false, true) {
                 Verdict::Send(sent) => assert!(
                     kb.position_of(sent as u8).is_some(),
                     "{sent:#04x} is not on the matrix"
@@ -563,5 +696,115 @@ mod tests {
         assert_eq!(vk::RMENU as u8, gandalf::keyboard::named::FUNCTION);
         assert_eq!(vk::LCONTROL as u8, gandalf::keyboard::named::CONTROL);
         assert_eq!(vk::LSHIFT as u8, gandalf::keyboard::named::SHIFT);
+    }
+
+    /// Every key `FUNCTION` can be moved to works as the modifier: held, not
+    /// sent, and exactly one of them is FUNCTION for a given choice.
+    #[test]
+    fn the_function_key_can_be_moved() {
+        const NAMES: &[&str] = &[
+            "right_alt", "menu", "application", "caps_lock", "left_windows",
+            "right_windows", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f12",
+            "left_shift", "right_shift",
+        ];
+        for name in NAMES {
+            let chosen = function_key_named(name).expect(name);
+            // Held while captured, it is the modifier and nothing else.
+            assert_eq!(
+                decide(chosen, true, true, false, true, chosen),
+                Verdict::Swallow,
+                "{name} was sent as a keystroke"
+            );
+            assert_eq!(
+                decide(chosen, false, true, false, true, chosen),
+                Verdict::Swallow,
+                "{name} release leaked"
+            );
+            assert!(
+                std::ptr::eq(modifier_flag(chosen, chosen).unwrap(), &FUNCTION),
+                "{name} is not FUNCTION"
+            );
+            // Right Alt is only FUNCTION while it is the choice.
+            assert_eq!(
+                modifier_flag(vk::RMENU, chosen).is_some(),
+                *name == "right_alt",
+                "right Alt ({name})"
+            );
+            // No other candidate becomes FUNCTION by accident. Any shift key
+            // that is not the choice is still SHIFT -- a shift stays a shift
+            // unless FUNCTION is moved onto it, so choosing one only takes
+            // that one key.
+            for other in NAMES {
+                let other_vk = function_key_named(other).unwrap();
+                if other_vk != chosen {
+                    if matches!(other_vk, vk::LSHIFT | vk::RSHIFT) {
+                        assert!(
+                            std::ptr::eq(modifier_flag(other_vk, chosen).unwrap(), &SHIFT),
+                            "{other} is not SHIFT alongside {name}"
+                        );
+                    } else {
+                        assert!(
+                            modifier_flag(other_vk, chosen).is_none(),
+                            "{name} made {other} a modifier"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// Choosing right shift as FUNCTION takes that key away from SHIFT -- the
+    /// chord key has to be where the right thumb can reach it, and the left
+    /// shift carries every capital from then on.
+    #[test]
+    fn a_shift_as_function_leaves_the_other_shift_as_shift() {
+        let chosen = function_key_named("right_shift").unwrap();
+        assert_eq!(chosen, vk::RSHIFT);
+        assert!(std::ptr::eq(modifier_flag(vk::RSHIFT, chosen).unwrap(), &FUNCTION));
+        assert!(std::ptr::eq(modifier_flag(vk::LSHIFT, chosen).unwrap(), &SHIFT));
+        // The chosen key is held as FUNCTION, so a chord reaches the machine
+        // with FUNCTION held, not SHIFT.
+        let flag = modifier_flag(vk::RSHIFT, chosen).unwrap();
+        flag.store(true, Ordering::Relaxed);
+        let held = mods();
+        flag.store(false, Ordering::Relaxed);
+        assert!(held.function);
+        assert!(!held.shift);
+        // Left shift still holds SHIFT.
+        let flag = modifier_flag(vk::LSHIFT, chosen).unwrap();
+        flag.store(true, Ordering::Relaxed);
+        let held = mods();
+        flag.store(false, Ordering::Relaxed);
+        assert!(held.shift);
+        assert!(!held.function);
+    }
+
+    /// Names that are not a key `FUNCTION` can be are refused, so a typo in
+    /// the settings file says so instead of silently keeping right Alt.
+    #[test]
+    fn an_unknown_function_key_name_is_none() {
+        for bad in ["left_alt", "f11", "f1", "shift", "control", "enter", "wibble"] {
+            assert_eq!(function_key_named(bad), None, "{bad} should not be allowed");
+        }
+    }
+
+    /// The chosen key is held as FUNCTION, which is what makes the chord
+    /// reach the matrix with the machine's own FUNCTION code held.
+    #[test]
+    fn the_chosen_key_sets_the_function_flag() {
+        let chosen = function_key_named("menu").unwrap();
+        let flag = modifier_flag(chosen, chosen).unwrap();
+        flag.store(true, Ordering::Relaxed);
+        let held = mods();
+        flag.store(false, Ordering::Relaxed);
+        assert!(held.function, "the chosen key is not held as FUNCTION");
+    }
+
+    /// Right Alt is the default, and the machine's code agrees that it is the
+    /// FUNCTION key.
+    #[test]
+    fn the_function_key_defaults_to_right_alt() {
+        assert_eq!(function_key(), vk::RMENU);
+        assert_eq!(function_key() as u8, gandalf::keyboard::named::FUNCTION);
     }
 }

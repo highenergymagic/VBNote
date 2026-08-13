@@ -21,7 +21,29 @@
 //! Modifiers are read as modifiers, not sent as keystrokes of their own: what
 //! goes to the guest is one keystroke with things held down, which is what a
 //! chord is.
+//!
+//! # Where there is no hook, this carries everything
+//!
+//! `WH_KEYBOARD_LL` is a Windows API and has no portable equivalent -- under
+//! Wayland a global key grab is not something an application may ask for at
+//! all -- so anywhere else the window is the only way in. It therefore carries
+//! the host chords as well as the keystrokes, or a machine on those platforms
+//! could not be reset or quit and would have to be killed.
+//!
+//! **Capture is honoured here too, and means the same thing to the user**:
+//! start released, `host`+`G` to capture, and no keystroke reaches the machine
+//! until it is. It is a weaker promise than the hook's, because the window
+//! only ever sees keys while it is focused and holds nothing when it is not --
+//! but that is the same promise from the user's side, and keeping the model
+//! identical across platforms means one set of instructions and one habit.
+//!
+//! It is also free of the trap the hook has to work around. Releasing the
+//! keyboard cannot depend on the emulator's loop *there*, because the hook
+//! holds the user's own keyboard and a stalled loop would take it away
+//! entirely. Here nothing is held: not forwarding a key is a local decision,
+//! and every key still reaches the host's other windows regardless.
 
+use crate::hostkey::Command;
 use crate::keys::{press_for, Mods, Press};
 use gandalf::keyboard::named;
 use minifb::{Key, Window, WindowOptions};
@@ -60,6 +82,29 @@ fn held(window: &Window) -> Mods {
         read: window.is_key_down(Key::LeftAlt),
         function: window.is_key_down(Key::RightAlt),
     }
+}
+
+/// The emulator's own key, held rather than sent.
+///
+/// `F11` for the reason `hostkey` gives: it is on every keyboard, and the
+/// machine has no use for it -- `HELP`, `RPT` and `MENU` are `F1` to `F3`.
+/// Like the modifiers it is never delivered to the guest, so it is not in
+/// `keys_of_interest`.
+const HOST: Key = Key::F11;
+
+/// The command a key means while the host key is held, if any.
+///
+/// The same three chords the hook has, deliberately: a user who learns them on
+/// one platform has learned them on the other.
+fn host_chord(key: Key, captured: bool) -> Option<Command> {
+    Some(match key {
+        Key::G => Command::Capture(!captured),
+        Key::R => Command::Reset,
+        Key::Q => Command::Quit,
+        // An unassigned host chord does nothing, and in particular does not
+        // fall through and type its letter into the document.
+        _ => return None,
+    })
 }
 
 /// The unshifted character a printable key stands for.
@@ -130,16 +175,21 @@ fn keys_of_interest() -> Vec<Key> {
 /// what the host requires, and it keeps the emulator's loop free of any
 /// obligation to service a message queue on time.
 pub fn run_without_keys() {
-    run(None)
+    run(None, None)
 }
 
 /// Open the window and relay keystrokes until it is closed.
 ///
-/// `keys` is `None` when something else is taking the keyboard -- on Windows a
-/// hook does, because this library cannot see either Alt and so cannot carry
-/// `READ` or `FUNCTION` at all. The window is still wanted: it is what the
-/// user closes to stop the machine.
-pub fn run(keys: Option<Sender<Press>>) {
+/// Both senders are `None` when something else is taking the keyboard -- on
+/// Windows a hook does, because this library cannot see either Alt and so
+/// cannot carry `READ` or `FUNCTION` at all. The window is still wanted: it is
+/// what the user closes to stop the machine.
+///
+/// Given them, this is the whole keyboard: keystrokes on `keys`, and the host
+/// chords on `commands`. They arrive together or not at all -- a window
+/// carrying keys but no way to quit would be a machine that could only be
+/// killed.
+pub fn run(keys: Option<Sender<Press>>, commands: Option<Sender<Command>>) {
     let mut window = match Window::new(
         "VBNote — VoiceNote QT mPower (type here; the machine speaks)",
         480,
@@ -160,18 +210,38 @@ pub fn run(keys: Option<Sender<Press>>) {
     let blank = vec![0u32; 480 * 160];
     let watch = keys_of_interest();
     let mut down = vec![false; watch.len()];
+    // Released, the same as the hook starts. The machine is not typed at
+    // until the user asks for it, and the asking is announced.
+    let mut captured = false;
 
     while window.is_open() {
         let mods = held(&window);
+        let host_down = window.is_key_down(HOST);
         for (i, key) in watch.iter().enumerate() {
             let now = window.is_key_down(*key);
             // On the edge only. Holding a key sends one keystroke, the way a
             // menu expects, and the guest decides how long to hold the matrix
             // line down for its scanner.
             if now && !down[i] {
-                if let (Some(keys), Some(press)) = (keys.as_ref(), translate(*key, mods)) {
-                    if keys.send(press).is_err() {
-                        return;
+                if host_down {
+                    // The emulator's, never the machine's. A host chord that
+                    // also reached the guest would type into the document it
+                    // was quitting.
+                    if let (Some(commands), Some(command)) =
+                        (commands.as_ref(), host_chord(*key, captured))
+                    {
+                        if let Command::Capture(on) = command {
+                            captured = on;
+                        }
+                        if commands.send(command).is_err() {
+                            return;
+                        }
+                    }
+                } else if captured {
+                    if let (Some(keys), Some(press)) = (keys.as_ref(), translate(*key, mods)) {
+                        if keys.send(press).is_err() {
+                            return;
+                        }
                     }
                 }
             }
@@ -271,6 +341,36 @@ mod tests {
         ] {
             assert!(watched.contains(&key), "{key:?} is not watched");
         }
+    }
+
+    /// The three chords the hook has, so a habit learned on one platform is
+    /// the same habit on the other. `G` toggles rather than sets, because the
+    /// one that gives the keyboard back is the same chord that took it.
+    #[test]
+    fn the_host_chords_match_the_hooks() {
+        assert_eq!(host_chord(Key::G, false), Some(Command::Capture(true)));
+        assert_eq!(host_chord(Key::G, true), Some(Command::Capture(false)));
+        assert_eq!(host_chord(Key::R, true), Some(Command::Reset));
+        assert_eq!(host_chord(Key::Q, true), Some(Command::Quit));
+    }
+
+    /// An unassigned host chord does nothing at all. Falling through to the
+    /// letter would type into whatever the machine has open.
+    #[test]
+    fn an_unassigned_host_chord_does_nothing() {
+        for key in [Key::A, Key::Z, Key::Enter, Key::Key1, Key::F1] {
+            assert_eq!(host_chord(key, false), None, "{key:?} should not be a chord");
+        }
+    }
+
+    /// The host key is the emulator's own and is never sent on, so like the
+    /// modifiers it must not be watched as a key. It would not survive
+    /// `every_watched_key_reaches_the_matrix` either -- the machine has no
+    /// F11 -- but the reason is the point.
+    #[test]
+    fn the_host_key_is_not_watched_as_a_key() {
+        assert!(!keys_of_interest().contains(&HOST), "the host key must never reach the guest");
+        assert_eq!(HOST, Key::F11);
     }
 
     /// The modifiers must not also be delivered as keystrokes: pressing READ
