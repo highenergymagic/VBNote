@@ -187,8 +187,11 @@ the second. Without it the failure is `'stddef.h' file not found` from inside
   may not be the right default on Linux** and nobody has measured what is.
   Higher is only worth trying where the interpreter can actually retire it;
   re-read the warning under `--cpu-mhz` before changing anything.
-- Not yet tried: **Wayland** (the session measured was X11), and a real output
-  device under load -- the boots above were `--mute --wav`.
+- **A real output device works.** The boots measured above were `--mute --wav`,
+  which exercises the resampler and the counters but never opens a host card;
+  cpal actually taking ALSA was the one link in the chain left untried, and it
+  has since been run on X11 with audio and works. Still not tried: **Wayland**,
+  for the window or for anything else.
 - **`installer/` is Inno Setup and CI is `windows-latest` only.** There is no
   Linux packaging and no Linux job. `home::directory()` already falls back to
   `$HOME`, so `~/.VBNote` and installed mode work; what a user is *told* does
