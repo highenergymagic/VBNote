@@ -16,7 +16,9 @@ live on an emulated flash disk that survives being switched off.
 
 ## What you need
 
-1. **Windows**, 64-bit.
+1. **Windows**, 64-bit — or **Linux**, where VBNote now runs and speaks.
+   There is no Linux installer: build it from source, and see
+   *For developers* below. X11 is tested; Wayland is not.
 2. **The firmware from a machine you own** — two files, `EBOOT.bin` and
    `NK.bin`. VBNote does not include them and cannot obtain them for you. They
    belong to whoever made your machine, and getting them off it is something
@@ -26,8 +28,12 @@ That is all. Everything else is in the installer.
 
 ## Installing
 
-Download `VBNote-1.2.0-setup.exe` from
+Download `VBNote-1.3.0-setup.exe` from
 [Releases](https://github.com/highenergymagic/VBNote/releases) and run it.
+
+The installer is Windows only. On Linux there is nothing to install: build
+`vbnote`, run the setup wizard once with `python -m wizard`, and start it the
+same way as on Windows.
 
 It installs for you alone and does not ask for an administrator. Windows may
 warn that it does not recognise the program: VBNote is not code-signed, and a
