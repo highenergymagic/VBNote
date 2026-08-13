@@ -921,6 +921,28 @@ which is what a mis-declared struct fails. It cannot assert they *differ*,
 because on a host set to UTC they are equal and correctly so, and a range test
 alone would pass while the machine announced the wrong day.
 
+## `--cpu-mhz 63` is right, and there is no headroom above it
+
+Re-measured after the TLB started handing back RAM offsets, because that
+change took a boot from 90% of real time to 100% and it was worth asking
+whether the default could rise with it. **It cannot**, and the shape of the
+answer is the same one the 1200 default got wrong:
+
+| `--cpu-mhz` | speed | underruns |
+|---|---|---|
+| **63** | **100%** | **0** |
+| 75 | 83% | 1038 |
+| 90 | 72% | 1276 |
+
+All three reach the main menu and speak. What breaks above 63 is not
+progress, it is the audio: guest time falls behind real time, the guest makes
+its speech in guest time, and the shortfall is heard.
+
+So what the fast path bought is **reliability rather than speed** -- the same
+90-second boot, with the stutter gone at its cause instead of hidden behind a
+bigger cushion. Do not raise this default hoping for a faster machine.
+
+
 ## Open problems
 
 0. **Instruction fetch is already free, so a JIT has to generate code.**
@@ -1021,9 +1043,7 @@ alone would pass while the machine announced the wrong day.
    step with `Ost::read` for ever, in exchange for nothing, which is the same
    trade the block cache and the audio rate controller lost.
 
-0.95 **Four experiments, four zeroes, and they all say the same thing.**
-   Worth stating on its own, because it is the argument against every
-   remaining cheap idea:
+0.95 **Four zeroes and then one that paid, and the difference is volume.**
 
    | | result |
    |---|---|
@@ -1031,13 +1051,22 @@ alone would pass while the machine announced the wrong day.
    | idle skipping (0.75) | **no change** |
    | OSCR device-read fast path (0.9) | **no change** |
    | block-at-a-time JIT (0.5) | correct, **6% slower** |
+   | **RAM offset cached in the TLB** | **96.0 s -> 88.7 s** |
 
-   Everything that removes work from *around* an instruction -- fetching it,
-   translating its address, dispatching its device, skipping it when the core
-   is halted -- comes back zero. The cost is decoding and dispatching the
-   instruction itself, which agrees with the real workload running within 25%
-   of a microbenchmark executing nothing but `add`. **Stop nibbling. The only
-   thing left is generating native code.**
+   For a long time the lesson looked like "everything around the instruction
+   is already free". It is not that. The fetch cache removed a flash read
+   that was cheap; idle skipping removed halted steps that were nearly free;
+   the OSCR path removed one match arm on 164 M accesses out of 12 G cycles.
+   The RAM offset removed a guarded chain of range compares from **every load
+   and store the machine makes**, where SDRAM sat in the last arm and paid
+   for every device test above it.
+
+   So the rule is **volume, not layer**. Before building a fast path, count
+   how many times a boot takes it: 164 M sounds enormous and is 1% of the
+   run; RAM accesses are most of the other 99%.
+
+   Everything else still stands -- the remaining gap really is decode and
+   dispatch, and closing it really does need native code.
 
 1. **Speed.** 65 M cycles/s, 15.3 ns an emulated cycle, against 3.2 ns for a
    real PXA270. The cheap wins are taken: device ticking was over half the
