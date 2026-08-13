@@ -54,6 +54,21 @@ struct TlbEntry {
     ap: u8,
     /// Set when the domain is a manager domain, so AP is not checked.
     manager: bool,
+    /// Which accesses this granule allows: bit 0 user read, bit 1 user write,
+    /// bit 2 privileged read, bit 3 privileged write.
+    ///
+    /// Precomputed when the entry is filled, so that a TLB hit needs no
+    /// permission check at all -- matching the tag *is* the permission. That
+    /// is an AND and a test in place of a chain of branches through
+    /// `manager`, the S and R control bits and `ap_permits`, and it is what
+    /// lets generated code perform a load inline: compiled code cannot call
+    /// into a permission checker, so the check has to have happened already.
+    ///
+    /// Sound only because everything the mask depends on invalidates the
+    /// whole TLB: `ap` and `manager` come from the tables and DACR, which
+    /// set `tlb_dirty` on a write to c2 or c3, and S and R do the same on a
+    /// write to c1.
+    perm: u8,
     /// True when the descriptor came from a section, for fault reporting.
     section: bool,
     domain: u8,
@@ -65,6 +80,7 @@ impl TlbEntry {
         phys: 0,
         ap: 0,
         manager: false,
+        perm: 0,
         section: false,
         domain: 0,
     };
@@ -129,38 +145,61 @@ pub fn translate<B: Bus>(
 
     let vgn = va >> TLB_GRANULE_BITS;
     let slot = Tlb::slot(vgn);
+    let need = need_mask(privileged, access);
     let e = tlb.entries[slot];
     if e.tag == vgn {
-        check(cp15, e, va, access, privileged)?;
-        return Ok(e.phys | (va & GRANULE_MASK));
+        if e.perm & need != 0 {
+            return Ok(e.phys | (va & GRANULE_MASK));
+        }
+        return Err(denied(e, va));
     }
 
-    let e = walk(cp15, bus, va)?;
+    let mut e = walk(cp15, bus, va)?;
+    e.perm = perm_mask(
+        e.ap,
+        e.manager,
+        cp15.control & ctl::S != 0,
+        cp15.control & ctl::R != 0,
+    );
     tlb.entries[slot] = e;
-    check(cp15, e, va, access, privileged)?;
-    Ok(e.phys | (va & GRANULE_MASK))
+    if e.perm & need != 0 {
+        Ok(e.phys | (va & GRANULE_MASK))
+    } else {
+        Err(denied(e, va))
+    }
 }
 
+/// The single bit an access needs to find set in a `perm` mask.
 #[inline]
-fn check(
-    cp15: &Cp15,
-    e: TlbEntry,
-    va: u32,
-    access: Access,
-    privileged: bool,
-) -> Result<(), Fault> {
-    if e.manager {
-        return Ok(());
+fn need_mask(privileged: bool, access: Access) -> u8 {
+    // Fetching is checked as a read: ARMv5 AP fields have no execute bit.
+    let write = (access == Access::Write) as u8;
+    1 << (((privileged as u8) << 1) | write)
+}
+
+/// Fold `ap_permits` over all four combinations, once, at fill time.
+fn perm_mask(ap: u8, manager: bool, s: bool, r: bool) -> u8 {
+    if manager {
+        // A manager domain is not permission-checked at all.
+        return 0xF;
     }
-    let write = access == Access::Write;
-    let s = cp15.control & ctl::S != 0;
-    let r = cp15.control & ctl::R != 0;
-    if ap_permits(e.ap, privileged, write, s, r) {
-        Ok(())
-    } else {
-        let code = if e.section { FS_PERM_SECTION } else { FS_PERM_PAGE };
-        Err(Fault { fsr: code | ((e.domain as u32) << 4), far: va })
+    let mut m = 0u8;
+    for privileged in [false, true] {
+        for write in [false, true] {
+            if ap_permits(ap, privileged, write, s, r) {
+                m |= 1 << (((privileged as u8) << 1) | write as u8);
+            }
+        }
     }
+    m
+}
+
+/// The fault a denied access takes, which is the only thing the slow path
+/// still needs `section` and `domain` for.
+#[inline]
+fn denied(e: TlbEntry, va: u32) -> Fault {
+    let code = if e.section { FS_PERM_SECTION } else { FS_PERM_PAGE };
+    Fault { fsr: code | ((e.domain as u32) << 4), far: va }
 }
 
 /// Two-level hardware page table walk.
@@ -197,6 +236,7 @@ fn walk<B: Bus>(cp15: &Cp15, bus: &mut B, va: u32) -> Result<TlbEntry, Fault> {
                 phys,
                 ap,
                 manager,
+                perm: 0,
                 section: true,
                 domain,
             })
@@ -229,7 +269,7 @@ fn l2<B: Bus>(
         1 => {
             let ap = ((d >> (4 + 2 * ((va >> 14) & 3))) & 3) as u8;
             let phys = (d & 0xFFFF_0000) | (va & 0x0000_FC00);
-            Ok(TlbEntry { tag, phys, ap, manager, section: false, domain })
+            Ok(TlbEntry { tag, phys, ap, manager, perm: 0, section: false, domain })
         }
 
         // 4 KB small page: four AP fields, one per 1 KB subpage, selected by
@@ -237,13 +277,13 @@ fn l2<B: Bus>(
         2 => {
             let ap = ((d >> (4 + 2 * ((va >> 10) & 3))) & 3) as u8;
             let phys = (d & 0xFFFF_F000) | (va & 0x0000_0C00);
-            Ok(TlbEntry { tag, phys, ap, manager, section: false, domain })
+            Ok(TlbEntry { tag, phys, ap, manager, perm: 0, section: false, domain })
         }
 
         // 1 KB tiny page: a single AP field, and exactly one granule.
         _ => {
             let ap = ((d >> 4) & 3) as u8;
-            Ok(TlbEntry { tag, phys: d & 0xFFFF_FC00, ap, manager, section: false, domain })
+            Ok(TlbEntry { tag, phys: d & 0xFFFF_FC00, ap, manager, perm: 0, section: false, domain })
         }
     }
 }
@@ -346,4 +386,57 @@ fn access_str(ap: u8, privileged: bool, s: bool, r: bool) -> &'static str {
 /// Build the fault a misaligned access raises when CP15 c1[1] is set.
 pub fn alignment_fault(va: u32) -> Fault {
     Fault { fsr: FS_ALIGN, far: va }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The folded mask has to answer exactly what the predicate it replaced
+    /// answered, for every AP field, every domain kind and both control bits.
+    ///
+    /// This is the test that matters for this change: `perm_mask` runs once
+    /// per TLB fill and `ap_permits` used to run once per memory access, so a
+    /// disagreement would be a permission bug visible only under a guest that
+    /// relies on the difference -- which this one does, at PUserKData.
+    #[test]
+    fn the_folded_mask_agrees_with_the_predicate() {
+        for ap in 0..4u8 {
+            for manager in [false, true] {
+                for s in [false, true] {
+                    for r in [false, true] {
+                        let m = perm_mask(ap, manager, s, r);
+                        for privileged in [false, true] {
+                            for access in [Access::Read, Access::Write, Access::Exec] {
+                                let want = manager
+                                    || ap_permits(
+                                        ap,
+                                        privileged,
+                                        access == Access::Write,
+                                        s,
+                                        r,
+                                    );
+                                let got = m & need_mask(privileged, access) != 0;
+                                assert_eq!(
+                                    got, want,
+                                    "ap={ap} manager={manager} s={s} r={r}                                      privileged={privileged} access={access:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fetching is checked as a read, so it must want the same bit.
+    #[test]
+    fn execute_is_checked_as_a_read() {
+        for privileged in [false, true] {
+            assert_eq!(
+                need_mask(privileged, Access::Exec),
+                need_mask(privileged, Access::Read)
+            );
+        }
+    }
 }
