@@ -88,6 +88,18 @@ are mapped to keys near where your thumbs already are:
 So `FUNCTION`+`O` for the options menu, `READ`+`T` for the time, and so on,
 exactly as the manuals describe.
 
+**Right Alt is only the default FUNCTION key.** Some keyboards use right Alt
+for characters of their own (AltGr), and holding it with a letter can type one
+instead. If FUNCTION misbehaves on yours, set `function_key` in the settings
+file to a key the machine never uses — `menu`, `caps_lock`, `left_windows`,
+`right_windows`, or `f4` to `f10` and `f12` — and VBNote says which key it is
+when it starts.
+
+`left_shift` and `right_shift` are allowed too, at a price: the key you choose
+becomes FUNCTION and stops being SHIFT, so every capital letter and every
+shifted chord then happens on the other shift. It is the price of having the
+chord key where the machine's FUNCTION sits, under the right thumb.
+
 ### F11 is VBNote's own key
 
 F11 never reaches the machine. Held with a letter, it talks to the emulator:
@@ -170,6 +182,9 @@ it is unlikely to help.
 
 Set `debug = yes` to get a terminal window with a running commentary and a
 status file, which is worth including if you report a problem.
+
+`function_key` moves the machine's FUNCTION key off right Alt, for keyboards
+that use right Alt for characters of their own (see "The keyboard" above).
 
 ## If something goes wrong
 

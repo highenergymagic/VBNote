@@ -170,6 +170,14 @@ struct Options {
     /// between the two and is what the setup questions were driven with, one
     /// keystroke per press, twenty-three for twenty-three.
     key_hold_ms: u64,
+    /// The host key that stands in for the machine's `FUNCTION`, as a Windows
+    /// virtual-key code.
+    ///
+    /// Right Alt by default, because it is the machine's own code. Some
+    /// keyboards use right Alt for characters of their own (AltGr), so it can
+    /// be moved; the names are in `hostkey::function_key_named`, and
+    /// `VBNote.ini` sets it for the installed machine.
+    function_key: u32,
     /// Contents of the 1-Wire EEPROM holding this machine's serial number.
     /// Supplied by whoever owns the machine, like EBOOT.bin and NK.bin are.
     serial_eeprom: Option<String>,
@@ -240,6 +248,7 @@ fn parse_args() -> Result<Options, String> {
         patches_dir: None,
         installed: false,
         key_hold_ms: 800,
+        function_key: hostkey::vk::RMENU,
         sd_card: Some("FlashCard.img".to_string()),
         serial_eeprom: Some("SerialNumber.bin".to_string()),
         sd_card_mb: 128,
@@ -338,6 +347,11 @@ fn parse_args() -> Result<Options, String> {
             "--key-hold-ms" => {
                 let v = args.next().ok_or("--key-hold-ms needs a number")?;
                 opts.key_hold_ms = v.parse().map_err(|_| "--key-hold-ms needs a number")?;
+            }
+            "--function-key" => {
+                let v = args.next().ok_or("--function-key needs a key")?;
+                opts.function_key = hostkey::function_key_named(&v)
+                    .ok_or_else(|| format!("--function-key: {v} is not a key FUNCTION can be"))?;
             }
             "--patches" => {
                 opts.patches_dir = Some(args.next().ok_or("--patches needs a directory")?);
@@ -470,6 +484,12 @@ fn parse_args() -> Result<Options, String> {
                      \x20                      delete it, so something else can drive it\n\
                      \x20 --key-gpio N         pin pulled low while a key is held (default 11)\n\
                      \x20 --key-hold-ms N      longest a key is held if unseen (default 800)\n\
+                     \x20 --function-key KEY    which key is FUNCTION, for keyboards that\n\
+                     \x20                      use right Alt for their own characters. One of\n\
+                     \x20                      right_alt (default), menu, caps_lock,\n\
+                     \x20                      left_windows, right_windows, f4 to f10, f12,\n\
+                     \x20                      or left_shift/right_shift (which stop being\n\
+                     \x20                      SHIFT; the other shift does that work)\n\
                      \x20 --input TEXT         feed TEXT to the bootloader console instead\n\
                      \x20 --input-after TEXT   wait for TEXT in the output before sending it\n\
                      \n\
@@ -562,6 +582,7 @@ fn from_installed_machine(opts: &mut Options) -> Result<(), String> {
     opts.serial_eeprom = Some(at(home::ONEWIRE));
     opts.cpu_hz = settings.cpu_mhz * 1_000_000;
     opts.key_hold_ms = settings.key_hold_ms;
+    opts.function_key = settings.function_key;
     opts.mute = settings.mute;
     // The window, the keyboard hook and the speech: this is somebody sitting
     // down to use the machine, not a scripted run.
@@ -1554,6 +1575,10 @@ fn run(
     };
     let (key_tx, key_rx) = std::sync::mpsc::channel::<keys::Press>();
     let (command_tx, command_rx) = std::sync::mpsc::channel::<hostkey::Command>();
+    // Which key is FUNCTION is settled before the hook is installed and
+    // before the start-up speech describes it. Right Alt is the default;
+    // a keyboard that uses it for characters of its own can move it.
+    hostkey::set_function_key(opts.function_key);
     // Everything the host key does is invisible, so it is spoken. A run with
     // no window has nobody at the keyboard and stays quiet.
     let (voice, trouble) = if opts.keyboard {
@@ -1572,10 +1597,12 @@ fn run(
         let voice = voice.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(2));
-            voice.say(
+            voice.say(&format!(
                 "VBNote ready. Keyboard released. \
-                 F 11 with G to capture it, R to reset, Q to quit.",
-            );
+                 F 11 with G to capture it, R to reset, Q to quit. \
+                 FUNCTION is {}.",
+                hostkey::function_key_spoken()
+            ));
         });
     }
     if opts.keyboard {
