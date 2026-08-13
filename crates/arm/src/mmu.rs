@@ -44,6 +44,10 @@ const TLB_SIZE: usize = 1 << TLB_BITS;
 const TLB_MASK: u32 = (TLB_SIZE - 1) as u32;
 /// Offset within a TLB granule.
 const GRANULE_MASK: u32 = (1 << TLB_GRANULE_BITS) - 1;
+/// A granule in bytes, which is what the bus is asked to vouch for.
+pub const GRANULE_BYTES: u32 = 1 << TLB_GRANULE_BITS;
+/// `ram_off` for a granule that is not directly-addressable RAM.
+const NOT_RAM: u32 = u32::MAX;
 
 #[derive(Copy, Clone)]
 struct TlbEntry {
@@ -69,6 +73,12 @@ struct TlbEntry {
     /// set `tlb_dirty` on a write to c2 or c3, and S and R do the same on a
     /// write to c1.
     perm: u8,
+    /// Byte offset of this granule in `Bus::ram()`, or `NOT_RAM`.
+    ///
+    /// Filled once when the entry is filled, so a hit on a RAM granule hands
+    /// back an index into a slice and the physical-address dispatch never
+    /// runs. Flash and every device answer `NOT_RAM` and keep the slow path.
+    ram_off: u32,
     /// True when the descriptor came from a section, for fault reporting.
     section: bool,
     domain: u8,
@@ -81,6 +91,7 @@ impl TlbEntry {
         ap: 0,
         manager: false,
         perm: 0,
+        ram_off: NOT_RAM,
         section: false,
         domain: 0,
     };
@@ -139,8 +150,28 @@ pub fn translate<B: Bus>(
     privileged: bool,
     enabled: bool,
 ) -> Result<u32, Fault> {
+    translate_ram(cp15, tlb, bus, va, access, privileged, enabled).map(|(pa, _)| pa)
+}
+
+/// Translate, and also say where the access lands in `Bus::ram()` when it
+/// lands in RAM at all.
+///
+/// The offset is the whole point: with it a load is a slice index, without it
+/// the physical address has to be dispatched through the board's memory map
+/// on every single access.
+pub fn translate_ram<B: Bus>(
+    cp15: &Cp15,
+    tlb: &mut Tlb,
+    bus: &mut B,
+    va: u32,
+    access: Access,
+    privileged: bool,
+    enabled: bool,
+) -> Result<(u32, Option<u32>), Fault> {
     if !enabled {
-        return Ok(va);
+        // No MMU means no TLB and no entry to have cached anything in, and
+        // this is only EBOOT and the first moments of CE. Take the slow path.
+        return Ok((va, None));
     }
 
     let vgn = va >> TLB_GRANULE_BITS;
@@ -149,7 +180,7 @@ pub fn translate<B: Bus>(
     let e = tlb.entries[slot];
     if e.tag == vgn {
         if e.perm & need != 0 {
-            return Ok(e.phys | (va & GRANULE_MASK));
+            return Ok((e.phys | (va & GRANULE_MASK), ram_at(e, va)));
         }
         return Err(denied(e, va));
     }
@@ -161,11 +192,22 @@ pub fn translate<B: Bus>(
         cp15.control & ctl::S != 0,
         cp15.control & ctl::R != 0,
     );
+    e.ram_off = bus.ram_offset(e.phys, GRANULE_BYTES).unwrap_or(NOT_RAM);
     tlb.entries[slot] = e;
     if e.perm & need != 0 {
-        Ok(e.phys | (va & GRANULE_MASK))
+        Ok((e.phys | (va & GRANULE_MASK), ram_at(e, va)))
     } else {
         Err(denied(e, va))
+    }
+}
+
+/// Where this access lands in `Bus::ram()`, given the granule it hit.
+#[inline]
+fn ram_at(e: TlbEntry, va: u32) -> Option<u32> {
+    if e.ram_off == NOT_RAM {
+        None
+    } else {
+        Some(e.ram_off + (va & GRANULE_MASK))
     }
 }
 
@@ -237,6 +279,7 @@ fn walk<B: Bus>(cp15: &Cp15, bus: &mut B, va: u32) -> Result<TlbEntry, Fault> {
                 ap,
                 manager,
                 perm: 0,
+                ram_off: NOT_RAM,
                 section: true,
                 domain,
             })
@@ -269,7 +312,7 @@ fn l2<B: Bus>(
         1 => {
             let ap = ((d >> (4 + 2 * ((va >> 14) & 3))) & 3) as u8;
             let phys = (d & 0xFFFF_0000) | (va & 0x0000_FC00);
-            Ok(TlbEntry { tag, phys, ap, manager, perm: 0, section: false, domain })
+            Ok(TlbEntry { tag, phys, ap, manager, perm: 0, ram_off: NOT_RAM, section: false, domain })
         }
 
         // 4 KB small page: four AP fields, one per 1 KB subpage, selected by
@@ -277,13 +320,13 @@ fn l2<B: Bus>(
         2 => {
             let ap = ((d >> (4 + 2 * ((va >> 10) & 3))) & 3) as u8;
             let phys = (d & 0xFFFF_F000) | (va & 0x0000_0C00);
-            Ok(TlbEntry { tag, phys, ap, manager, perm: 0, section: false, domain })
+            Ok(TlbEntry { tag, phys, ap, manager, perm: 0, ram_off: NOT_RAM, section: false, domain })
         }
 
         // 1 KB tiny page: a single AP field, and exactly one granule.
         _ => {
             let ap = ((d >> 4) & 3) as u8;
-            Ok(TlbEntry { tag, phys: d & 0xFFFF_FC00, ap, manager, perm: 0, section: false, domain })
+            Ok(TlbEntry { tag, phys: d & 0xFFFF_FC00, ap, manager, perm: 0, ram_off: NOT_RAM, section: false, domain })
         }
     }
 }
@@ -427,6 +470,68 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A RAM granule reports an offset that names the same byte the physical
+    /// address does, and a granule that is not RAM reports none.
+    ///
+    /// Worth a real page table rather than a unit test of the arithmetic: the
+    /// fast path only engages with the MMU on, so nothing else in this crate
+    /// reaches it, and a wrong offset here is silent memory corruption rather
+    /// than a crash.
+    #[test]
+    fn a_ram_granule_hands_back_an_index_and_a_device_does_not() {
+        use crate::bus::Ram;
+
+        let mut bus = Ram::new(0, 8 * 1024 * 1024);
+        let base = Cp15::default();
+        let cp15 = Cp15 {
+            ttbr: 0x4000,
+            dacr: 1, // domain 0, client
+            control: base.control | ctl::M,
+            ..base
+        };
+
+        // Two 1 MB sections, AP 3 (anyone may do anything), domain 0: one
+        // aimed inside the RAM, one aimed at a device address outside it.
+        let section = |phys: u32| phys | (3 << 10) | 0x2;
+        bus.write32(0x4000 + 4, section(0x0020_0000)); // va 0x00100000 -> RAM
+        bus.write32(0x4000 + 8, section(0x4000_0000)); // va 0x00200000 -> device
+
+        let mut tlb = Tlb::default();
+        let go = |tlb: &mut Tlb, bus: &mut Ram, va| {
+            translate_ram(&cp15, tlb, bus, va, Access::Read, true, true).unwrap()
+        };
+
+        let (pa, ram) = go(&mut tlb, &mut bus, 0x0010_0010);
+        assert_eq!(pa, 0x0020_0010);
+        assert_eq!(ram, Some(0x0020_0010), "RAM granule gives its own offset");
+
+        // The offset must name the byte the physical address names.
+        bus.write32(pa, 0xDEAD_BEEF);
+        let o = ram.unwrap() as usize;
+        assert_eq!(
+            u32::from_le_bytes(bus.ram()[o..o + 4].try_into().unwrap()),
+            0xDEAD_BEEF
+        );
+
+        let (pa, ram) = go(&mut tlb, &mut bus, 0x0020_0004);
+        assert_eq!(pa, 0x4000_0004);
+        assert_eq!(ram, None, "a device keeps the slow path");
+
+        // Second time round is a TLB hit, and must answer the same.
+        assert_eq!(go(&mut tlb, &mut bus, 0x0010_0010).1, Some(0x0020_0010));
+        assert_eq!(go(&mut tlb, &mut bus, 0x0020_0004).1, None);
+    }
+
+    /// A granule that would run off the end of RAM is not RAM.
+    #[test]
+    fn a_granule_must_fit_entirely() {
+        use crate::bus::Ram;
+        let bus = Ram::new(0, 4096);
+        assert_eq!(bus.ram_offset(3072, GRANULE_BYTES), Some(3072));
+        assert_eq!(bus.ram_offset(4096 - 512, GRANULE_BYTES), None);
+        assert_eq!(bus.ram_offset(8192, GRANULE_BYTES), None);
     }
 
     /// Fetching is checked as a read, so it must want the same bit.

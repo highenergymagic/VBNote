@@ -437,17 +437,48 @@ impl Cpu {
         mmu::translate(&self.cp15, &mut self.tlb, bus, mva, access, priv_mode, enabled)
     }
 
+    /// `translate`, and also where the access lands in `bus.ram()`.
+    #[inline]
+    fn translate_ram<B: Bus>(
+        &mut self,
+        bus: &mut B,
+        va: u32,
+        access: Access,
+    ) -> Result<(u32, Option<u32>), Fault> {
+        if access != Access::Exec {
+            if let Some((lo, hi)) = self.watch {
+                if (lo..hi).contains(&va) && self.watch_hits.len() < 64 {
+                    let write = access == Access::Write;
+                    self.watch_hits.push((va, self.r[15], self.cp15.pid, write));
+                }
+            }
+        }
+        let mva = self.cp15.fcse(va);
+        let priv_mode = self.privileged() && !self.force_user;
+        let enabled = self.mmu_active;
+        mmu::translate_ram(&self.cp15, &mut self.tlb, bus, mva, access, priv_mode, enabled)
+    }
+
     pub fn read_u8<B: Bus>(&mut self, bus: &mut B, va: u32) -> Result<u8, Fault> {
-        let pa = self.translate(bus, va, Access::Read)?;
-        Ok(bus.read8(pa))
+        let (pa, ram) = self.translate_ram(bus, va, Access::Read)?;
+        match ram {
+            Some(o) => Ok(bus.ram()[o as usize]),
+            None => Ok(bus.read8(pa)),
+        }
     }
 
     pub fn read_u16<B: Bus>(&mut self, bus: &mut B, va: u32) -> Result<u16, Fault> {
         if va & 1 != 0 && self.cp15.alignment_faults() {
             return Err(mmu::alignment_fault(va));
         }
-        let pa = self.translate(bus, va & !1, Access::Read)?;
-        Ok(bus.read16(pa))
+        let (pa, ram) = self.translate_ram(bus, va & !1, Access::Read)?;
+        match ram {
+            Some(o) => {
+                let o = o as usize;
+                Ok(u16::from_le_bytes(bus.ram()[o..o + 2].try_into().unwrap()))
+            }
+            None => Ok(bus.read16(pa)),
+        }
     }
 
     /// Word load. An unaligned address rotates the loaded value, which is
@@ -456,20 +487,35 @@ impl Cpu {
         if va & 3 != 0 && self.cp15.alignment_faults() {
             return Err(mmu::alignment_fault(va));
         }
-        let pa = self.translate(bus, va & !3, Access::Read)?;
-        let val = bus.read32(pa);
+        let (pa, ram) = self.translate_ram(bus, va & !3, Access::Read)?;
+        let val = match ram {
+            Some(o) => {
+                let o = o as usize;
+                u32::from_le_bytes(bus.ram()[o..o + 4].try_into().unwrap())
+            }
+            None => bus.read32(pa),
+        };
         Ok(val.rotate_right(8 * (va & 3)))
     }
 
     /// Word load without the rotate, for instruction fetch and LDM.
     pub fn read_u32_aligned<B: Bus>(&mut self, bus: &mut B, va: u32) -> Result<u32, Fault> {
-        let pa = self.translate(bus, va & !3, Access::Read)?;
-        Ok(bus.read32(pa))
+        let (pa, ram) = self.translate_ram(bus, va & !3, Access::Read)?;
+        match ram {
+            Some(o) => {
+                let o = o as usize;
+                Ok(u32::from_le_bytes(bus.ram()[o..o + 4].try_into().unwrap()))
+            }
+            None => Ok(bus.read32(pa)),
+        }
     }
 
     pub fn write_u8<B: Bus>(&mut self, bus: &mut B, va: u32, val: u8) -> Result<(), Fault> {
-        let pa = self.translate(bus, va, Access::Write)?;
-        bus.write8(pa, val);
+        let (pa, ram) = self.translate_ram(bus, va, Access::Write)?;
+        match ram {
+            Some(o) => bus.ram_mut()[o as usize] = val,
+            None => bus.write8(pa, val),
+        }
         Ok(())
     }
 
@@ -477,8 +523,14 @@ impl Cpu {
         if va & 1 != 0 && self.cp15.alignment_faults() {
             return Err(mmu::alignment_fault(va));
         }
-        let pa = self.translate(bus, va & !1, Access::Write)?;
-        bus.write16(pa, val);
+        let (pa, ram) = self.translate_ram(bus, va & !1, Access::Write)?;
+        match ram {
+            Some(o) => {
+                let o = o as usize;
+                bus.ram_mut()[o..o + 2].copy_from_slice(&val.to_le_bytes());
+            }
+            None => bus.write16(pa, val),
+        }
         Ok(())
     }
 
@@ -486,8 +538,14 @@ impl Cpu {
         if va & 3 != 0 && self.cp15.alignment_faults() {
             return Err(mmu::alignment_fault(va));
         }
-        let pa = self.translate(bus, va & !3, Access::Write)?;
-        bus.write32(pa, val);
+        let (pa, ram) = self.translate_ram(bus, va & !3, Access::Write)?;
+        match ram {
+            Some(o) => {
+                let o = o as usize;
+                bus.ram_mut()[o..o + 4].copy_from_slice(&val.to_le_bytes());
+            }
+            None => bus.write32(pa, val),
+        }
         Ok(())
     }
 

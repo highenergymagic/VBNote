@@ -364,6 +364,22 @@ macro_rules! dispatch_read {
 }
 
 impl Bus for Gandalf {
+    fn ram(&self) -> &[u8] {
+        &self.sdram
+    }
+
+    fn ram_mut(&mut self) -> &mut [u8] {
+        &mut self.sdram
+    }
+
+    /// SDRAM only. Flash is a device with modes -- a read of a part left in
+    /// status or query mode is not the array -- and everything at a chip
+    /// select or in the SoC has to keep its dispatch.
+    fn ram_offset(&self, pa: u32, len: u32) -> Option<u32> {
+        let off = Gandalf::sdram_off(pa)?;
+        (off + len as usize <= SDRAM_SIZE).then_some(off as u32)
+    }
+
     fn read8(&mut self, pa: u32) -> u8 {
         match pa & 0xFFF0_0000 {
             CPLD_BASE => self.cpld_read(pa & 0xFFFFF) as u8,

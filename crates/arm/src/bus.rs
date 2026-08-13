@@ -48,6 +48,33 @@ pub trait Bus {
     fn fiq_pending(&self) -> bool {
         false
     }
+
+    /// The bus's directly-addressable RAM, if it has any.
+    ///
+    /// This exists so that a TLB hit can produce an *index* rather than a
+    /// physical address that then has to be dispatched all over again. The
+    /// dispatch is a chain of range compares with guards on it, and it runs
+    /// on every load and store; the index is a slice access. It is also what
+    /// compiled code needs, because generated code cannot walk a match.
+    fn ram(&self) -> &[u8] {
+        &[]
+    }
+
+    fn ram_mut(&mut self) -> &mut [u8] {
+        &mut []
+    }
+
+    /// Where `pa` sits in `ram()`, if the whole `len` bytes from there are
+    /// plain RAM.
+    ///
+    /// Asked about a whole TLB granule when an entry is filled, never per
+    /// access, and answering `Some` is a promise that every byte of that
+    /// granule is in bounds -- which is what lets the fast path skip a
+    /// second range check.
+    fn ram_offset(&self, pa: u32, len: u32) -> Option<u32> {
+        let _ = (pa, len);
+        None
+    }
 }
 
 /// A flat byte-addressed region, used for RAM and for tests.
@@ -73,6 +100,22 @@ impl Ram {
 }
 
 impl Bus for Ram {
+    fn ram(&self) -> &[u8] {
+        &self.data
+    }
+
+    fn ram_mut(&mut self) -> &mut [u8] {
+        &mut self.data
+    }
+
+    fn ram_offset(&self, pa: u32, len: u32) -> Option<u32> {
+        if !self.contains(pa) {
+            return None;
+        }
+        let off = self.off(pa);
+        (off + len as usize <= self.data.len()).then_some(off as u32)
+    }
+
     #[inline]
     fn read8(&mut self, pa: u32) -> u8 {
         let o = self.off(pa);
