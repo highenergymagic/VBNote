@@ -381,8 +381,19 @@ to go with them.
 |---|---|
 | `CONTROL` | either control key (`0xA2`, `0xA3`) |
 | `READ` | left Alt (`0xA4`) |
-| `FUNCTION` | right Alt (`0xA5`) |
+| `FUNCTION` | right Alt (`0xA5`), settable |
 | host key | **`F11`** (`0x7A`), never sent to the machine |
+
+**`FUNCTION` defaults to right Alt and is movable.** Some keyboards use right
+Alt for characters of their own (AltGr), so holding it with a letter types one
+instead of holding the key. `function_key` in `VBNote.ini` (or `--function-key`
+on the command line) moves it to `menu`, `caps_lock`, `left_windows`,
+`right_windows`, `f4`-`f10`/`f12`, or `left_shift`/`right_shift`;
+`hostkey::function_key_named` is the one table, used by the settings parser and
+by the command line alike. Choosing a shift key costs you SHIFT on it: the key
+becomes FUNCTION and the other shift carries every capital and shifted chord
+from then on (`modifier_flag` gives the chosen key priority, so READ and
+CONTROL cannot be taken). The start-up announcement says which key is FUNCTION.
 
 **The host key was right control and is `F11` as of 1.1.0**, because of a bug
 report saying some keyboards do not have one -- compact and laptop keyboards
