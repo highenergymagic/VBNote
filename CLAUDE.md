@@ -880,13 +880,33 @@ clock questions out loud at every boot, to somebody who cannot see the screen.
    the firmware spending its own time, and it costs the same wall clock on
    both machines.
 
-   What is *not* settled is host cost, and the distinction is the one from
-   0.75 again: **9% is a share of guest cycles, not of host time.** Those
-   164 M iterations are 164 M *device-register* reads, which take the bus
-   dispatch rather than the SDRAM slice, so they may be worth several times
-   an ordinary instruction each. Whether an OSCR fast path pays is an open,
-   bounded question -- and per the rule below it needs a boot to first
-   speech to answer, not a clock reading.
+   Host cost was left open here, on the grounds that 9% is a share of guest
+   cycles and says nothing about host time, and that 164 M *device-register*
+   reads take the bus dispatch rather than the SDRAM slice. **Tried, and it
+   is worth nothing.** A one-compare fast path for OSCR at the top of
+   `Gandalf::read32`, ahead of both matches and their guards, over a fixed
+   5 G cycles: **96.0 s before, 95.3 s after**, against a 3 s spread between
+   repeats of the same binary. Reverted -- a special case that has to stay in
+   step with `Ost::read` for ever, in exchange for nothing, which is the same
+   trade the block cache and the audio rate controller lost.
+
+0.95 **Four experiments, four zeroes, and they all say the same thing.**
+   Worth stating on its own, because it is the argument against every
+   remaining cheap idea:
+
+   | | result |
+   |---|---|
+   | instruction fetch cache (0) | 99.8% hit rate, **no change** |
+   | idle skipping (0.75) | **no change** |
+   | OSCR device-read fast path (0.9) | **no change** |
+   | block-at-a-time JIT (0.5) | correct, **6% slower** |
+
+   Everything that removes work from *around* an instruction -- fetching it,
+   translating its address, dispatching its device, skipping it when the core
+   is halted -- comes back zero. The cost is decoding and dispatching the
+   instruction itself, which agrees with the real workload running within 25%
+   of a microbenchmark executing nothing but `add`. **Stop nibbling. The only
+   thing left is generating native code.**
 
 1. **Speed.** 65 M cycles/s, 15.3 ns an emulated cycle, against 3.2 ns for a
    real PXA270. The cheap wins are taken: device ticking was over half the
@@ -896,6 +916,35 @@ clock questions out loud at every boot, to somebody who cannot see the screen.
    `Apache-2.0 WITH LLVM-exception`, which the exception makes GPLv2
    compatible, so it is available. Do not re-measure the MMU: it costs
    nothing, the TLB hit path is a tag compare.
+
+   **The next attempt starts at the memory path, not the ALU, and QEMU shows
+   how.** 0.5 lost on coverage: 15%, six-instruction blocks, with loads and
+   branches ending 73% of them. QEMU's answer to both is readable at `v9.0.0`
+   and is a design rather than code worth copying:
+
+   - **An inline TLB fast path for every load and store**, so a memory access
+     stops ending a block. `tcg/i386/tcg-target.c.inc` generates about ten
+     host instructions with no call and no taken branch: shift the guest
+     address into an index, mask and add the per-CPU table base, compare the
+     tag, `jne` to a slow path, then load the addend and index off it.
+   - **Direct block chaining**, so *leaving* a block costs a patched jump
+     rather than a return to the dispatcher. Six-instruction blocks stop
+     being fatal, which is how the branch third of the problem goes away
+     without compiling branches at all -- and compiling branches is what
+     broke the boot last time.
+   - **Bail to the interpreter on a fault or a TLB miss**, restarting the
+     faulting instruction. QEMU cannot do this and reconstructs state by
+     re-translating; we have a correct interpreter sitting there, so the
+     hazard that made 0.5 a minefield mostly evaporates.
+
+   **Do not link TCG and do not use Unicorn.** There is no `libtcg`: at
+   `v9.0.0` it is 57,575 lines of `tcg/` plus 102,003 of `target/arm/`,
+   entangled with `CPUState`, softmmu, `cpu_loop_exit`'s longjmp and QEMU's
+   memory API, built by meson. Unicorn is that made into a library and is
+   GPL-2.0, so the licence is fine, but every MMIO access becomes a hook
+   callback -- and this machine does 164 M OSCR reads a boot -- and its cycle
+   accounting is not ours, which the audio cushion, the OS timer and the
+   keyboard's scan counting all depend on.
 
 2. **Nothing is driving the modem's line.** It answers AT commands with `OK`
    and identifies itself, which is all first-run setup needs. Real internet
