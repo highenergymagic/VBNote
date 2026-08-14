@@ -149,6 +149,12 @@ vbnote roms/EBOOT.bin --flash --nk roms/NK.bin --cpu-mhz 63 \
   `count`, `stop`). Every EXE links at `0x00010000`, so use `slot=N` or a
   breakpoint fires in every process.
 - **A boot to the first prompt takes about 90 seconds** with `--cpu-mhz 63`,
+  against **under 20 seconds on the real machine** -- reported by somebody who
+  owned one, and the arithmetic agrees exactly: 90/18 is 5.0 and 312 MHz over
+  63 MHz is 4.95. So the boot is **CPU-work-bound, very nearly linear in
+  `--cpu-mhz`**, and not dominated by the firmware's own delays: those are
+  about 8 seconds of the 90 (see the `StallExecution` note). This is the
+  number that says what a faster core is actually worth.
   or 7 minutes without it. Run it in the background and poll `status` rather
   than blocking on it.
 
@@ -1067,6 +1073,19 @@ bigger cushion. Do not raise this default hoping for a faster machine.
 
    Everything else still stands -- the remaining gap really is decode and
    dispatch, and closing it really does need native code.
+
+**What speed is actually worth, since it was nearly written off.** The real
+machine boots in **under 20 seconds** and this one takes 90, and the ratio is
+the clock ratio: the boot is CPU-work-bound and close to linear in
+`--cpu-mhz`. `--cpu-mhz` cannot be raised because 56 M cycles/s is all the
+interpreter retires, which is exactly the constraint a faster core removes.
+So the 4.6x below is not a refinement -- it is the difference between
+**eighteen seconds of silence and ninety**, to somebody who cannot see the
+screen and has no other way to tell whether the machine is starting or has
+failed. It was briefly concluded here that the emulator "already holds 100%
+of real time" and that speed therefore did not matter much. That is true and
+beside the point: holding real time at a fifth of the real clock is what the
+90 seconds *is*.
 
 1. **Speed.** 65 M cycles/s, 15.3 ns an emulated cycle, against 3.2 ns for a
    real PXA270. The cheap wins are taken: device ticking was over half the

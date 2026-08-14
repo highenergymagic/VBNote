@@ -131,8 +131,11 @@ keystrokes in other programs.
 
 ### While it starts
 
-A cold start takes about a minute and a half, the same as the real machine, and
-it is silent for most of that. VBNote says what it is doing as it goes —
+A cold start takes about a minute and a half, and it is silent for most of
+that. The real machine did this in under twenty seconds; VBNote is slower
+because emulating an ARM processor costs several of your computer's
+instructions for each one of the machine's. Nothing is wrong when it takes
+that long. VBNote says what it is doing as it goes —
 "Windows starting", "Loading drivers", "Keyboard ready" — and if a stage is
 taking a while it says so rather than going quiet. Once the machine has its own
 voice, VBNote stops talking over it.
